@@ -14,12 +14,12 @@ use ruma_events::room::{
 };
 use serde_json::{from_value as from_json_value, json};
 
-/// A representative FLOE `file` block as verji-app emits it: a JWK-wrapped 256-bit root key, the
+/// A representative FLOE `file` block as a client emits it: a JWK-wrapped 256-bit root key, the
 /// segment size and plaintext length, and the FLOE `v` discriminator — with no `iv` and no
 /// `hashes` (FLOE authenticates each segment in place).
 fn floe_file_json() -> serde_json::Value {
     json!({
-        "url": "mxc://verji.local/HugeFloeFile0001",
+        "url": "mxc://notareal.hs/hugefloefile",
         "key": {
             "kty": "oct",
             "key_ops": ["decrypt", "encrypt"],
@@ -37,7 +37,7 @@ fn floe_file_json() -> serde_json::Value {
 fn floe_encrypted_file_deserialization() {
     let file = from_json_value::<EncryptedFile>(floe_file_json()).unwrap();
 
-    assert_eq!(file.url, "mxc://verji.local/HugeFloeFile0001");
+    assert_eq!(file.url, "mxc://notareal.hs/hugefloefile");
     // FLOE carries no whole-file ciphertext hash.
     assert!(file.hashes.is_empty());
 
