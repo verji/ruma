@@ -9,6 +9,7 @@ mod event;
 mod event_content;
 mod event_enums;
 mod file;
+mod floe;
 mod image;
 mod initial_state;
 mod location;
