@@ -1,10 +1,14 @@
 use std::{borrow::Cow, collections::BTreeMap};
 
 use as_variant::as_variant;
+#[cfg(feature = "unstable-msc4016")]
+use js_int::UInt;
 use ruma_common::serde::{Base64, JsonObject};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeMap};
 use serde_json::{Value as JsonValue, from_value as from_json_value};
 
+#[cfg(feature = "unstable-msc4016")]
+use super::FloeEncryptedFileInfo;
 use super::{
     CustomEncryptedFileHash, CustomEncryptedFileInfo, EncryptedFileHash,
     EncryptedFileHashAlgorithm, EncryptedFileHashes, EncryptedFileInfo, V2EncryptedFileInfo,
@@ -24,6 +28,8 @@ impl<'de> Deserialize<'de> for EncryptedFileInfo {
 
         match v.as_ref() {
             "v2" => from_json_value(data.into()).map(Self::V2),
+            #[cfg(feature = "unstable-msc4016")]
+            "org.matrix.msc4016.floe.v0" => from_json_value(data.into()).map(Self::Floe),
             _ => Ok(Self::_Custom(CustomEncryptedFileInfo { v, data })),
         }
         .map_err(de::Error::custom)
@@ -104,6 +110,89 @@ struct V2EncryptedFileInfoSerdeHelper<'a> {
     /// The 128-bit unique counter block used by AES-CTR, encoded as unpadded base64.
     #[serde(borrow)]
     iv: Cow<'a, str>,
+}
+
+#[cfg(feature = "unstable-msc4016")]
+impl<'de> Deserialize<'de> for FloeEncryptedFileInfo {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let FloeEncryptedFileInfoSerdeHelper {
+            key: JsonWebKey { kty, key_ops, alg, k, ext },
+            enc_seg_len,
+            size,
+        } = FloeEncryptedFileInfoSerdeHelper::deserialize(deserializer)?;
+
+        if kty != "oct" {
+            return Err(de::Error::custom(format!(
+                "invalid value in `kty` field: `{kty}` , expected `oct`"
+            )));
+        }
+
+        if alg != "FLOE-A256GCM-SHA384" {
+            return Err(de::Error::custom(format!(
+                "invalid value in `alg` field: `{alg}` , expected `FLOE-A256GCM-SHA384`"
+            )));
+        }
+
+        if !key_ops.iter().any(|key_op| key_op == "encrypt") {
+            return Err(de::Error::custom("missing value `encrypt` in `key_ops` field"));
+        }
+
+        if !key_ops.iter().any(|key_op| key_op == "decrypt") {
+            return Err(de::Error::custom("missing value `decrypt` in `key_ops` field"));
+        }
+
+        if !ext {
+            return Err(de::Error::custom(
+                "invalid value in `ext` field: `false` , expected `true`",
+            ));
+        }
+
+        let key = Base64::parse(k.as_ref())
+            .map_err(|error| de::Error::custom(format!("invalid value in `k` field: {error}")))?;
+
+        Ok(Self { key, enc_seg_len, size })
+    }
+}
+
+#[cfg(feature = "unstable-msc4016")]
+impl Serialize for FloeEncryptedFileInfo {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Self { key, enc_seg_len, size } = self;
+
+        let info = FloeEncryptedFileInfoSerdeHelper {
+            key: JsonWebKey {
+                kty: Cow::Borrowed("oct"),
+                key_ops: vec![Cow::Borrowed("decrypt"), Cow::Borrowed("encrypt")],
+                alg: Cow::Borrowed("FLOE-A256GCM-SHA384"),
+                k: Cow::Owned(key.encode()),
+                ext: true,
+            },
+            enc_seg_len: *enc_seg_len,
+            size: *size,
+        };
+
+        info.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "unstable-msc4016")]
+#[derive(Deserialize, Serialize)]
+struct FloeEncryptedFileInfoSerdeHelper<'a> {
+    /// The root key.
+    #[serde(borrow)]
+    key: JsonWebKey<'a>,
+
+    /// The size in bytes of each encrypted segment.
+    enc_seg_len: UInt,
+
+    /// The plaintext length of the file in bytes.
+    size: UInt,
 }
 
 /// A [JSON Web Key](https://tools.ietf.org/html/rfc7517#appendix-A.3) object.
