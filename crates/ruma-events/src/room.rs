@@ -190,6 +190,13 @@ pub struct EncryptedFile {
     /// A map from an algorithm name to a hash of the ciphertext.
     ///
     /// Clients should support the SHA-256 hash.
+    ///
+    /// With the `unstable-msc4016` feature this is optional: FLOE-encrypted files authenticate
+    /// their contents per-segment and carry no separate ciphertext hash.
+    #[cfg_attr(
+        feature = "unstable-msc4016",
+        serde(default, skip_serializing_if = "EncryptedFileHashes::is_empty")
+    )]
     pub hashes: EncryptedFileHashes,
 }
 
@@ -208,6 +215,12 @@ pub enum EncryptedFileInfo {
     /// Information about a file encrypted using version 2 of the attachment encryption protocol.
     V2(V2EncryptedFileInfo),
 
+    /// Information about a file encrypted using the FLOE streaming construction proposed for
+    /// [MSC4016](https://github.com/matrix-org/matrix-spec-proposals/pull/4016).
+    #[cfg(feature = "unstable-msc4016")]
+    #[serde(rename = "org.matrix.msc4016.floe.v0")]
+    Floe(FloeEncryptedFileInfo),
+
     #[doc(hidden)]
     #[serde(untagged)]
     _Custom(CustomEncryptedFileInfo),
@@ -220,6 +233,8 @@ impl EncryptedFileInfo {
     pub fn version(&self) -> &str {
         match self {
             Self::V2(_) => "v2",
+            #[cfg(feature = "unstable-msc4016")]
+            Self::Floe(_) => "org.matrix.msc4016.floe.v0",
             Self::_Custom(info) => &info.v,
         }
     }
@@ -244,6 +259,8 @@ impl EncryptedFileInfo {
 
         match self {
             Self::V2(i) => Cow::Owned(serialize(i)),
+            #[cfg(feature = "unstable-msc4016")]
+            Self::Floe(i) => Cow::Owned(serialize(i)),
             Self::_Custom(i) => Cow::Borrowed(&i.data),
         }
     }
@@ -291,6 +308,54 @@ impl Drop for V2EncryptedFileInfo {
     }
 }
 
+/// Information about a file encrypted using the FLOE streaming construction proposed for
+/// [MSC4016](https://github.com/matrix-org/matrix-spec-proposals/pull/4016).
+///
+/// FLOE encrypts the file as a sequence of fixed-size AES-256-GCM segments, so a receiver can
+/// stream-decrypt and range-read it without holding the whole file in memory. Unlike
+/// [`V2EncryptedFileInfo`] there is no separate ciphertext hash: each segment is authenticated in
+/// place and truncation is detected by the construction itself.
+#[cfg(feature = "unstable-msc4016")]
+#[derive(Clone)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+pub struct FloeEncryptedFileInfo {
+    /// The 256-bit FLOE root key used to derive the per-segment keys.
+    pub key: Base64<UrlSafe, [u8; 32]>,
+
+    /// The size in bytes of each encrypted segment.
+    ///
+    /// A hint for range planning; the authenticated FLOE header is authoritative.
+    pub enc_seg_len: UInt,
+
+    /// The plaintext length of the file in bytes.
+    ///
+    /// A hint for final-segment indexing and progress; FLOE protects truncation itself.
+    pub size: UInt,
+}
+
+#[cfg(feature = "unstable-msc4016")]
+impl FloeEncryptedFileInfo {
+    /// Construct a new `FloeEncryptedFileInfo` with the given root key, segment size and plaintext
+    /// length.
+    pub fn new(key: Base64<UrlSafe, [u8; 32]>, enc_seg_len: UInt, size: UInt) -> Self {
+        Self { key, enc_seg_len, size }
+    }
+}
+
+#[cfg(feature = "unstable-msc4016")]
+impl fmt::Debug for FloeEncryptedFileInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FloeEncryptedFileInfo").finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "unstable-msc4016")]
+impl Drop for FloeEncryptedFileInfo {
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
+}
+
 /// Information about a file encrypted using a custom version of the attachment encryption protocol.
 #[doc(hidden)]
 #[derive(Debug, Clone, Serialize)]
@@ -327,6 +392,11 @@ impl EncryptedFileHashes {
     /// If a map with the same [`EncryptedFileHashAlgorithm`] was already present, it is returned.
     pub fn insert(&mut self, hash: EncryptedFileHash) -> Option<EncryptedFileHash> {
         self.0.insert(hash.algorithm(), hash)
+    }
+
+    /// Returns `true` if there are no hashes.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
