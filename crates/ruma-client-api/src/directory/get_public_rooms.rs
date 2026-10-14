@@ -5,7 +5,7 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv3publicrooms
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv3publicrooms
 
     use js_int::UInt;
     use ruma_common::{
@@ -80,7 +80,7 @@ pub mod v3 {
         }
     }
 
-    #[cfg(all(test, any(feature = "client", feature = "server")))]
+    #[cfg(test)]
     mod tests {
         use js_int::uint;
 
@@ -91,7 +91,7 @@ pub mod v3 {
 
             use ruma_common::{
                 api::{
-                    MatrixVersion, OutgoingRequest as _, SupportedVersions,
+                    MatrixVersion, OutgoingRequestExt as _, SupportedVersions,
                     auth_scheme::SendAccessToken,
                 },
                 owned_server_name,
@@ -126,7 +126,7 @@ pub mod v3 {
         #[cfg(feature = "server")]
         #[test]
         fn construct_response_from_refs() {
-            use ruma_common::api::OutgoingResponse as _;
+            use ruma_common::api::OutgoingResponseExt as _;
 
             let res = super::Response {
                 chunk: vec![],

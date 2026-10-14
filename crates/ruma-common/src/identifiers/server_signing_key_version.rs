@@ -10,11 +10,12 @@ use super::{IdParseError, KeyName};
 /// With the `compat-server-signing-key-version` cargo feature, the validation of this type is
 /// relaxed to accept any string.
 ///
-/// [homeserver signing key]: https://spec.matrix.org/v1.18/server-server-api/#retrieving-server-keys
+/// [homeserver signing key]: https://spec.matrix.org/v1.19/server-server-api/#retrieving-server-keys
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, IdDst)]
 #[ruma_id(
     validate = ruma_identifiers_validation::server_signing_key_version::validate,
+    smallvec_inline_bytes = 16,
 )]
 pub struct ServerSigningKeyVersion(str);
 

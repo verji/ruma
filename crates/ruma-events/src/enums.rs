@@ -1,6 +1,6 @@
 use ruma_common::{
     EventId, MilliSecondsSinceUnixEpoch, OwnedRoomId, RoomId, TransactionId, UserId,
-    serde::from_raw_json_value,
+    serde::{JsonCastable, from_raw_json_value},
 };
 #[cfg(feature = "unstable-msc3381")]
 use ruma_events::{
@@ -8,7 +8,7 @@ use ruma_events::{
     room::encrypted::Replacement,
 };
 use ruma_macros::{EventEnumFromEvent, event_enum};
-use serde::{Deserialize, de};
+use serde::{Deserialize, Serialize, de};
 use serde_json::value::RawValue as RawJsonValue;
 
 use super::room::encrypted;
@@ -16,7 +16,7 @@ use super::room::encrypted;
 /// Event types that servers should send as [stripped state] to help clients identify a room when
 /// they can't access the full room state.
 ///
-/// [stripped state]: https://spec.matrix.org/v1.18/client-server-api/#stripped-state
+/// [stripped state]: https://spec.matrix.org/v1.19/client-server-api/#stripped-state
 pub const RECOMMENDED_STRIPPED_STATE_EVENT_TYPES: &[StateEventType] = &[
     StateEventType::RoomCreate,
     StateEventType::RoomName,
@@ -30,7 +30,7 @@ pub const RECOMMENDED_STRIPPED_STATE_EVENT_TYPES: &[StateEventType] = &[
 /// Event types that servers should transfer upon [room upgrade]. The exact details for what is
 /// transferred is left as an implementation detail.
 ///
-/// [room upgrade]: https://spec.matrix.org/v1.18/client-server-api/#server-behaviour-21
+/// [room upgrade]: https://spec.matrix.org/v1.19/client-server-api/#server-behaviour-21
 pub const RECOMMENDED_TRANSFERABLE_STATE_EVENT_TYPES: &[StateEventType] = &[
     StateEventType::RoomServerAcl,
     StateEventType::RoomEncryption,
@@ -41,6 +41,8 @@ pub const RECOMMENDED_TRANSFERABLE_STATE_EVENT_TYPES: &[StateEventType] = &[
     StateEventType::RoomHistoryVisibility,
     StateEventType::RoomJoinRules,
     StateEventType::RoomPowerLevels,
+    #[cfg(feature = "unstable-msc4495")]
+    StateEventType::RoomPresenceSharing,
 ];
 
 event_enum! {
@@ -56,6 +58,7 @@ event_enum! {
         #[ruma_enum(ident = UnstableInvitePermissionConfig)]
         "org.matrix.msc4380.invite_permission_config" => super::invite_permission_config,
         "m.ignored_user_list" => super::ignored_user_list,
+        "m.image_pack.rooms" => super::image_pack::rooms,
         "m.push_rules" => super::push_rules,
         "m.secret_storage.default_key" => super::secret_storage::default_key,
         "m.secret_storage.key.*" => super::secret_storage::key,
@@ -64,14 +67,14 @@ event_enum! {
         #[cfg(feature = "unstable-msc4278")]
         #[ruma_enum(ident = UnstableMediaPreviewConfig)]
         "io.element.msc4278.media_preview_config" => super::media_preview_config,
-        #[cfg(feature = "unstable-msc2545")]
-        #[ruma_enum(ident = AccountImagePack, alias = "m.image_pack")]
-        "im.ponies.user_emotes" => super::image_pack,
-        #[cfg(feature = "unstable-msc2545")]
-        #[ruma_enum(ident = ImagePackRooms, alias = "m.image_pack.rooms")]
-        "im.ponies.emote_rooms" => super::image_pack,
         "m.recent_emoji" => super::recent_emoji,
         "m.key_backup" => super::key_backup,
+        #[cfg(feature = "unstable-msc4495")]
+        #[ruma_enum(ident = PresenceSharing)]
+        "org.continuwuity.presence_v2.msc4495.presence.sharing" => super::presence::sharing,
+        #[cfg(feature = "unstable-msc4495")]
+        #[ruma_enum(ident = PresencePrompted)]
+        "org.continuwuity.presence_v2.msc4495.presence.prompted" => super::presence::prompted,
     }
 
     /// Any room account data event.
@@ -190,6 +193,7 @@ event_enum! {
         "m.room.encrypted" => super::room::encrypted::unstable_state,
         "m.room.guest_access" => super::room::guest_access,
         "m.room.history_visibility" => super::room::history_visibility,
+        "m.room.image_pack" => super::room::image_pack,
         "m.room.join_rules" => super::room::join_rules,
         #[cfg(feature = "unstable-msc4334")]
         #[ruma_enum(alias = "m.room.language")]
@@ -199,15 +203,18 @@ event_enum! {
         "m.room.pinned_events" => super::room::pinned_events,
         "m.room.policy" => super::room::policy,
         "m.room.power_levels" => super::room::power_levels,
+        #[cfg(feature = "unstable-msc1763")]
+        #[ruma_enum(alias = "m.room.retention")]
+        "org.matrix.msc1763.retention" => super::room::retention,
         "m.room.server_acl" => super::room::server_acl,
         "m.room.third_party_invite" => super::room::third_party_invite,
         "m.room.tombstone" => super::room::tombstone,
         "m.room.topic" => super::room::topic,
+        #[cfg(feature = "unstable-msc4495")]
+        #[ruma_enum(alias = "m.room.presence_sharing")]
+        "org.continuwuity.presence_v2.msc4495.room.presence_sharing" => super::room::presence_sharing,
         "m.space.child" => super::space::child,
         "m.space.parent" => super::space::parent,
-        #[cfg(feature = "unstable-msc2545")]
-        #[ruma_enum(ident = RoomImagePack, alias = "m.image_pack")]
-        "im.ponies.room_emotes" => super::image_pack,
         #[cfg(feature = "unstable-msc3489")]
         #[ruma_enum(alias = "m.beacon_info")]
         "org.matrix.msc3672.beacon_info" => super::beacon_info,
@@ -223,9 +230,7 @@ event_enum! {
     enum ToDevice {
         "m.dummy" => super::dummy,
         "m.room_key" => super::room_key,
-        #[cfg(feature = "unstable-msc4268")]
-        #[ruma_enum(alias = "m.room_key_bundle")]
-        "io.element.msc4268.room_key_bundle" => super::room_key_bundle,
+        "m.room_key_bundle" => super::room_key_bundle,
         "m.room_key_request" => super::room_key_request,
         "m.room_key.withheld" => super::room_key::withheld,
         "m.forwarded_room_key" => super::forwarded_room_key,
@@ -371,6 +376,36 @@ impl From<AnyTimelineEvent> for AnySyncTimelineEvent {
         }
     }
 }
+
+/// Any room event content.
+#[allow(clippy::large_enum_variant, clippy::exhaustive_enums)]
+#[derive(Clone, Debug, EventEnumFromEvent, Serialize)]
+#[serde(untagged)]
+pub enum AnyTimelineEventContent {
+    /// Any message-like event content.
+    MessageLike(AnyMessageLikeEventContent),
+
+    /// Any state event content.
+    State(AnyStateEventContent),
+}
+
+impl AnyTimelineEventContent {
+    /// Get the event's type
+    pub fn event_type(&self) -> TimelineEventType {
+        match self {
+            Self::MessageLike(content) => {
+                <AnyMessageLikeEventContent as crate::MessageLikeEventContent>::event_type(content)
+                    .into()
+            }
+            Self::State(content) => {
+                <AnyStateEventContent as crate::StateEventContent>::event_type(content).into()
+            }
+        }
+    }
+}
+
+impl JsonCastable<AnyTimelineEventContent> for AnyMessageLikeEventContent {}
+impl JsonCastable<AnyTimelineEventContent> for AnyStateEventContent {}
 
 #[derive(Deserialize)]
 #[allow(clippy::exhaustive_structs)]

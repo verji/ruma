@@ -5,7 +5,7 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv3roomsroomidmembers
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv3roomsroomidmembers
 
     use ruma_common::{
         OwnedRoomId,
@@ -80,7 +80,7 @@ pub mod v3 {
 
     #[cfg(all(test, feature = "server"))]
     mod tests {
-        use ruma_common::api::IncomingRequest as _;
+        use ruma_common::api::IncomingRequestExt as _;
 
         use super::{MembershipState, Request};
 

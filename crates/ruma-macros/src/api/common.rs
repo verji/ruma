@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::parse_quote;
 
 use crate::util::{
@@ -119,28 +119,13 @@ impl Headers {
     pub(super) fn expand_serialize(
         &self,
         kind: MacroKind,
-        body: &Body,
-        ruma_common: &RumaCommon,
         http: &TokenStream,
     ) -> Option<TokenStream> {
-        let mut serialize = TokenStream::new();
-
-        // If there is no `CONTENT_TYPE` header, add one if necessary.
-        let content_type: syn::Ident = parse_quote!(CONTENT_TYPE);
-        if !self.0.contains_key(&content_type)
-            && let Some(content_type) = body.content_type(kind)
-        {
-            serialize.extend(quote! {
-                headers.insert(
-                    #http::header::CONTENT_TYPE,
-                    #ruma_common::http_headers::#content_type,
-                );
-            });
-        }
-
-        if serialize.is_empty() && self.0.is_empty() {
+        if self.0.is_empty() {
             return None;
         }
+
+        let mut serialize = TokenStream::new();
 
         for (header_name, field) in &self.0 {
             let ident = field.ident();
@@ -245,25 +230,41 @@ impl Body {
         Ok(())
     }
 
-    /// The content type of the body, if it can be determined.
-    ///
-    /// Returns a `const` from `ruma_common::http_headers`.
-    fn content_type(&self, kind: MacroKind) -> Option<syn::Ident> {
+    pub(super) fn type_name(
+        &self,
+        kind: MacroKind,
+        ruma_common: &RumaCommon,
+        meta_ident: &syn::Ident,
+    ) -> TokenStream {
         match &self.fields {
-            BodyFields::Empty if matches!(kind, MacroKind::Request) => {
-                // If there are no body fields, the request body might be empty (not `{}`), so the
-                // `application/json` content-type would be wrong. It may also cause problems with
-                // CORS policies that don't allow the `Content-Type` header (for things such as
-                // `.well-known` that are commonly handled by something else than a
-                // homeserver). However, a server should always return a JSON body.
-                None
+            BodyFields::Empty => {
+                match kind {
+                    MacroKind::Request => {
+                        let http = ruma_common.reexported(RumaCommonReexport::Http);
+                        quote! {
+                            #ruma_common::api::EmptyBody<{
+                                // Need this static to work around
+                                // 'destructor of http::Method cannot be evaluated at compile-time'.
+                                static M: #http::Method = <#meta_ident as #ruma_common::api::Metadata>::METHOD;
+                                // Need to use match instead of == since the latter goes through the
+                                // PartialEq trait and that can't be used in const contexts yet.
+                                match M {
+                                    #http::Method::GET => true,
+                                    _ => false
+                                }
+                            }>
+                        }
+                    }
+                    MacroKind::Response => {
+                        // A response always returns a JSON body.
+                        quote! { #ruma_common::api::EmptyBody<false> }
+                    }
+                }
             }
-            BodyFields::Empty | BodyFields::JsonFields(_) | BodyFields::JsonAll(_) => {
-                Some(parse_quote! { APPLICATION_JSON })
+            BodyFields::JsonFields(_) | BodyFields::JsonAll(_) => {
+                kind.as_struct_ident(StructSuffix::Body).into_token_stream()
             }
-            // This might not be the actual content type, but this is a better default than
-            // `application/json` when sending raw data.
-            BodyFields::Raw(_) => Some(parse_quote! { APPLICATION_OCTET_STREAM }),
+            BodyFields::Raw(_) => quote! { #ruma_common::api::BytesBody },
         }
     }
 
@@ -309,12 +310,18 @@ impl Body {
             extra_attrs.extend(quote! { #[serde(transparent)] });
         }
 
+        let outgoing_body_feature = match kind {
+            MacroKind::Request => "client",
+            MacroKind::Response => "server",
+        };
+
         Some(quote! {
             /// Data in the request body.
-            #[cfg(any(feature = "client", feature = "server"))]
+            #[doc(hidden)]
             #[derive(Debug, #ruma_macros::_FakeDeriveRumaApi, #ruma_macros::_FakeDeriveSerde)]
+            #[cfg_attr(feature = #outgoing_body_feature, derive(#ruma_macros::OutgoingBodyJson))]
             #extra_attrs
-            struct #ident { #( #fields ),* }
+            pub struct #ident { #( #fields ),* }
         })
     }
 
@@ -361,18 +368,12 @@ impl Body {
         let body_fields = expand_fields_as_list(fields);
 
         quote! {
-            let body: #body_ident = {
-                let body = ::std::convert::AsRef::<[::std::primitive::u8]>::as_ref(
-                    #src.body(),
-                );
-
-                #serde_json::from_slice(match body {
-                    // If the body is completely empty, pretend it is an empty JSON object instead.
-                    // This allows bodies with only optional fields to be deserialized in that case.
-                    [] => b"{}",
-                    b => b,
-                })?
-            };
+            let body: #body_ident = #serde_json::from_slice(match *#src.body() {
+                // If the body is completely empty, pretend it is an empty JSON object instead.
+                // This allows bodies with only optional fields to be deserialized in that case.
+                [] => b"{}",
+                b => b,
+            })?;
 
             let #body_ident {
                 #body_fields
@@ -380,36 +381,22 @@ impl Body {
         }
     }
 
-    /// Generate code to serialize the body.
-    pub(super) fn expand_serialize(
-        &self,
-        kind: MacroKind,
-        ruma_common: &RumaCommon,
-    ) -> TokenStream {
+    pub(super) fn body_expr(&self, kind: MacroKind, ruma_common: &RumaCommon) -> TokenStream {
         match &self.fields {
-            BodyFields::Empty => match kind {
-                MacroKind::Request => {
-                    quote! { <Self as #ruma_common::api::Metadata>::empty_request_body::<T>() }
+            BodyFields::Empty => quote! { #ruma_common::api::EmptyBody },
+            BodyFields::JsonFields(_) | BodyFields::JsonAll(_) => {
+                let serde_struct = kind.as_struct_ident(StructSuffix::Body);
+                let fields = self.expand_fields();
+                quote! {
+                    #serde_struct { #fields }
                 }
-                // A response always returns a JSON body.
-                MacroKind::Response => quote! { #ruma_common::serde::slice_to_buf(b"{}") },
-            },
-            BodyFields::JsonFields(_) => self.expand_serialize_json(kind, ruma_common),
-            BodyFields::JsonAll(_) => self.expand_serialize_json(kind, ruma_common),
-            BodyFields::Raw(field) => {
-                let ident = field.ident();
-                quote! { #ruma_common::serde::slice_to_buf(&#ident) }
             }
-        }
-    }
-
-    /// Generate code to serialize the JSON body with the given fields.
-    fn expand_serialize_json(&self, kind: MacroKind, ruma_common: &RumaCommon) -> TokenStream {
-        let fields = self.expand_fields();
-        let serde_struct = kind.as_struct_ident(StructSuffix::Body);
-
-        quote! {
-            #ruma_common::serde::json_to_buf(&#serde_struct { #fields })?
+            BodyFields::Raw(field) => {
+                let field_ident = field.ident.to_token_stream();
+                quote! {
+                    #ruma_common::api::BytesBody(#field_ident)
+                }
+            }
         }
     }
 }

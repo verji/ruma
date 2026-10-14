@@ -5,7 +5,7 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#fallback
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#fallback
 
     use ruma_common::{
         api::{auth_scheme::NoAccessToken, request},
@@ -82,20 +82,49 @@ pub mod v3 {
         }
     }
 
+    #[doc(hidden)]
+    #[allow(clippy::exhaustive_enums)]
+    pub enum ResponseBody {
+        Redirect,
+        Html(HtmlPage),
+    }
+
+    #[cfg(feature = "server")]
+    impl ruma_common::api::OutgoingBody for ResponseBody {
+        type Error = ruma_common::api::error::IntoHttpError;
+
+        fn content_type(&self) -> Option<http::HeaderValue> {
+            match self {
+                Self::Redirect => None,
+                Self::Html(_) => Some(ruma_common::http_headers::TEXT_HTML_UTF8),
+            }
+        }
+
+        fn try_into_buf<T: Default + bytes::BufMut + AsRef<[u8]>>(self) -> Result<T, Self::Error> {
+            let body = match self {
+                Self::Redirect => Vec::new(),
+                Self::Html(HtmlPage { body }) => body,
+            };
+
+            Ok(ruma_common::api::BytesBody(body).try_into_buf()?)
+        }
+    }
+
     #[cfg(feature = "server")]
     impl ruma_common::api::OutgoingResponse for Response {
-        fn try_into_http_response<T: Default + bytes::BufMut>(
+        type Body = ResponseBody;
+
+        fn try_into_http_response_inner(
             self,
-        ) -> Result<http::Response<T>, ruma_common::api::error::IntoHttpError> {
+        ) -> Result<http::Response<Self::Body>, ruma_common::api::error::IntoHttpError> {
             match self {
                 Response::Redirect(Redirect { url }) => Ok(http::Response::builder()
                     .status(http::StatusCode::FOUND)
                     .header(http::header::LOCATION, url)
-                    .body(T::default())?),
-                Response::Html(HtmlPage { body }) => Ok(http::Response::builder()
+                    .body(ResponseBody::Redirect)?),
+                Response::Html(html) => Ok(http::Response::builder()
                     .status(http::StatusCode::OK)
-                    .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
-                    .body(ruma_common::serde::slice_to_buf(&body))?),
+                    .body(ResponseBody::Html(html))?),
             }
         }
     }
@@ -104,27 +133,15 @@ pub mod v3 {
     impl ruma_common::api::IncomingResponse for Response {
         type EndpointError = ruma_common::api::error::Error;
 
-        fn try_from_http_response<T: AsRef<[u8]>>(
-            response: http::Response<T>,
-        ) -> Result<Self, ruma_common::api::error::FromHttpResponseError<Self::EndpointError>>
-        {
-            use ruma_common::api::{
-                EndpointError,
-                error::{DeserializationError, FromHttpResponseError, HeaderDeserializationError},
-            };
-
-            if response.status().as_u16() >= 400 {
-                return Err(FromHttpResponseError::Server(
-                    Self::EndpointError::from_http_response(response),
-                ));
-            }
+        fn try_from_http_response_inner(
+            response: http::Response<&[u8]>,
+        ) -> Result<Self, ruma_common::api::error::DeserializationError> {
+            use ruma_common::api::error::HeaderDeserializationError;
 
             if response.status() == http::StatusCode::FOUND {
                 let Some(location) = response.headers().get(http::header::LOCATION) else {
-                    return Err(DeserializationError::Header(
-                        HeaderDeserializationError::MissingHeader(
-                            http::header::LOCATION.to_string(),
-                        ),
+                    return Err(HeaderDeserializationError::MissingHeader(
+                        http::header::LOCATION.to_string(),
                     )
                     .into());
                 };
@@ -133,7 +150,7 @@ pub mod v3 {
                 return Ok(Self::Redirect(Redirect { url: url.to_owned() }));
             }
 
-            let body = response.into_body().as_ref().to_owned();
+            let body = response.into_body().to_owned();
             Ok(Self::Html(HtmlPage { body }))
         }
     }
@@ -142,7 +159,7 @@ pub mod v3 {
     mod tests_client {
         use assert_matches2::assert_let;
         use http::header::{CONTENT_TYPE, LOCATION};
-        use ruma_common::api::IncomingResponse;
+        use ruma_common::api::IncomingResponseExt as _;
 
         use super::Response;
 
@@ -153,7 +170,7 @@ pub mod v3 {
             let http_response = http::Response::builder()
                 .status(http::StatusCode::FOUND)
                 .header(LOCATION, "http://localhost/redirect")
-                .body(Vec::<u8>::new())
+                .body(b"".as_slice())
                 .unwrap();
 
             let response = Response::try_from_http_response(http_response).unwrap();
@@ -167,8 +184,8 @@ pub mod v3 {
 
             let http_response = http::Response::builder()
                 .status(http::StatusCode::OK)
-                .header(CONTENT_TYPE, "text/html; charset=utf-8")
-                .body(b"<h1>My Page</h1>")
+                .header(CONTENT_TYPE, ruma_common::http_headers::TEXT_HTML_UTF8)
+                .body(b"<h1>My Page</h1>".as_slice())
                 .unwrap();
 
             let response = Response::try_from_http_response(http_response).unwrap();
@@ -180,7 +197,7 @@ pub mod v3 {
     #[cfg(all(test, feature = "server"))]
     mod tests_server {
         use http::header::{CONTENT_TYPE, LOCATION};
-        use ruma_common::api::OutgoingResponse;
+        use ruma_common::api::OutgoingResponseExt as _;
 
         use super::Response;
 
@@ -206,8 +223,8 @@ pub mod v3 {
 
             assert_eq!(http_response.status(), http::StatusCode::OK);
             assert_eq!(
-                http_response.headers().get(CONTENT_TYPE).unwrap().to_str().unwrap(),
-                "text/html; charset=utf-8"
+                http_response.headers().get(CONTENT_TYPE).unwrap(),
+                ruma_common::http_headers::TEXT_HTML_UTF8
             );
             assert_eq!(http_response.into_body(), b"<h1>My Page</h1>");
         }

@@ -5,8 +5,10 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv3roomsroomidstateeventtypestatekey
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv3roomsroomidstateeventtypestatekey
 
+    #[cfg(feature = "client")]
+    use ruma_common::api::EmptyBody;
     use ruma_common::{
         OwnedRoomId,
         api::{auth_scheme::AccessToken, error::Error, response},
@@ -125,20 +127,20 @@ pub mod v3 {
 
     #[cfg(feature = "client")]
     impl ruma_common::api::OutgoingRequest for Request {
+        type Body = EmptyBody;
         type EndpointError = Error;
         type IncomingResponse = Response;
 
-        fn try_into_http_request<T: Default + bytes::BufMut + AsRef<[u8]>>(
+        fn try_into_http_request_inner(
             self,
             base_url: &str,
-            access_token: ruma_common::api::auth_scheme::SendAccessToken<'_>,
             considering: std::borrow::Cow<'_, ruma_common::api::SupportedVersions>,
-        ) -> Result<http::Request<T>, ruma_common::api::error::IntoHttpError> {
-            use ruma_common::api::{Metadata, auth_scheme::AuthScheme};
+        ) -> Result<http::Request<EmptyBody>, ruma_common::api::error::IntoHttpError> {
+            use ruma_common::api::Metadata;
 
             let query_string = serde_html_form::to_string(RequestQuery { format: self.format })?;
 
-            let mut http_request = http::Request::builder()
+            let http_request = http::Request::builder()
                 .method(Self::METHOD)
                 .uri(Self::make_endpoint_url(
                     considering,
@@ -146,11 +148,7 @@ pub mod v3 {
                     &[&self.room_id, &self.event_type, &self.state_key],
                     &query_string,
                 )?)
-                .body(T::default())?;
-
-            Self::Authentication::add_authentication(&mut http_request, access_token).map_err(
-                |error| ruma_common::api::error::IntoHttpError::Authentication(error.into()),
-            )?;
+                .body(EmptyBody)?;
 
             Ok(http_request)
         }
@@ -161,16 +159,10 @@ pub mod v3 {
         type EndpointError = Error;
         type OutgoingResponse = Response;
 
-        fn try_from_http_request<B, S>(
-            request: http::Request<B>,
-            path_args: &[S],
-        ) -> Result<Self, ruma_common::api::error::FromHttpRequestError>
-        where
-            B: AsRef<[u8]>,
-            S: AsRef<str>,
-        {
-            Self::check_request_method(request.method())?;
-
+        fn try_from_http_request_inner(
+            request: http::Request<&[u8]>,
+            path_args: &[&str],
+        ) -> Result<Self, ruma_common::api::error::DeserializationError> {
             // FIXME: find a way to make this if-else collapse with serde recognizing trailing
             // Option
             let (room_id, event_type, state_key): (OwnedRoomId, StateEventType, String) =
@@ -179,7 +171,7 @@ pub mod v3 {
                         _,
                         serde::de::value::Error,
                     >::new(
-                        path_args.iter().map(::std::convert::AsRef::as_ref),
+                        path_args.iter().copied()
                     ))?
                 } else {
                     let (a, b) =
@@ -187,7 +179,7 @@ pub mod v3 {
                             _,
                             serde::de::value::Error,
                         >::new(
-                            path_args.iter().map(::std::convert::AsRef::as_ref),
+                            path_args.iter().copied()
                         ))?;
 
                     (a, b, "".into())
@@ -213,9 +205,9 @@ pub mod v3 {
 
 #[cfg(all(test, feature = "client"))]
 mod tests {
-    use ruma_common::api::IncomingResponse;
+    use ruma_common::api::IncomingResponseExt as _;
     use ruma_events::room::name::RoomNameEventContent;
-    use serde_json::{json, to_vec as to_json_vec};
+    use serde_json::json;
 
     use super::v3::Response;
 
@@ -223,8 +215,9 @@ mod tests {
     fn deserialize_response() {
         let body = json!({
             "name": "Nice room 🙂"
-        });
-        let response = http::Response::new(to_json_vec(&body).unwrap());
+        })
+        .to_string();
+        let response = http::Response::new(body.as_bytes());
 
         let response = Response::try_from_http_response(response).unwrap();
         let content =

@@ -5,7 +5,7 @@
 pub mod v1 {
     //! `/v1/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv1roomsroomidthreads
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv1roomsroomidthreads
 
     use js_int::UInt;
     use ruma_common::{
@@ -43,7 +43,7 @@ pub mod v1 {
         pub from: Option<String>,
 
         /// Which thread roots are of interest to the caller.
-        #[serde(skip_serializing_if = "ruma_common::serde::is_default")]
+        #[serde(default, skip_serializing_if = "ruma_common::serde::is_default")]
         #[ruma_api(query)]
         pub include: IncludeThreads,
 
@@ -104,10 +104,50 @@ pub mod v1 {
         ///
         /// Only include thread roots for threads where [`current_user_participated`] is `true`.
         ///
-        /// [`current_user_participated`]: https://spec.matrix.org/v1.18/client-server-api/#server-side-aggregation-of-mthread-relationships
+        /// [`current_user_participated`]: https://spec.matrix.org/v1.19/client-server-api/#server-side-aggregation-of-mthread-relationships
         Participated,
 
         #[doc(hidden)]
         _Custom(PrivOwnedStr),
+    }
+}
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use ruma_common::{api::IncomingRequestExt as _, room_id};
+
+    use super::v1::{IncludeThreads, Request};
+
+    #[test]
+    // Testing when the include parameter is omitted from uri
+    // It should default to IncludeThreads::All
+    fn deserialize_request_without_include() {
+        let http_req = http::Request::builder()
+            .method(http::Method::GET)
+            .uri("/_matrix/client/v1/rooms/!room:example.com/threads")
+            .body(&[] as &[u8])
+            .unwrap();
+
+        let req = Request::try_from_http_request(http_req, &["!room:example.com"]).unwrap();
+
+        assert_eq!(req.room_id, room_id!("!room:example.com"));
+        assert_eq!(req.from, None);
+        assert_eq!(req.limit, None);
+        assert_eq!(req.include, IncludeThreads::All);
+    }
+
+    #[test]
+    // Testing when the include parameter is explicitly provided
+    fn deserialize_request_explicit_include() {
+        let http_req = http::Request::builder()
+            .method(http::Method::GET)
+            .uri("/_matrix/client/v1/rooms/!room:example.com/threads?include=participated")
+            .body(&[] as &[u8])
+            .unwrap();
+
+        let req = Request::try_from_http_request(http_req, &["!room:example.com"]).unwrap();
+
+        assert_eq!(req.room_id, room_id!("!room:example.com"));
+        assert_eq!(req.include, IncludeThreads::Participated);
     }
 }

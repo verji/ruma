@@ -5,13 +5,13 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv3adminwhoisuserid
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv3adminwhoisuserid
 
     use std::collections::BTreeMap;
 
     use ruma_common::{
         MilliSecondsSinceUnixEpoch, OwnedUserId,
-        api::{auth_scheme::AccessToken, request, response},
+        api::{OAuthClientScope, auth_scheme::AccessToken, request, response},
         metadata,
     };
     use serde::{Deserialize, Serialize};
@@ -20,6 +20,12 @@ pub mod v3 {
         method: GET,
         rate_limited: false,
         authentication: AccessToken,
+        required_client_scopes: [
+            #[cfg(not(feature = "unstable-msc4484"))]
+            OAuthClientScope::ApiFullAccess,
+            #[cfg(feature = "unstable-msc4484")]
+            OAuthClientScope::ServerAdministration,
+        ],
         history: {
             1.0 => "/_matrix/client/r0/admin/whois/{user_id}",
             1.1 => "/_matrix/client/v3/admin/whois/{user_id}",

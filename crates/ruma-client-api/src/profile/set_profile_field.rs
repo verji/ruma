@@ -9,7 +9,7 @@ pub mod v3 {
     //! it will only work with homeservers advertising support for the proper unstable feature or
     //! a version compatible with Matrix 1.16.
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#put_matrixclientv3profileuseridkeyname
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#put_matrixclientv3profileuseridkeyname
     //! [`set_avatar_url`]: crate::profile::set_avatar_url
     //! [`set_display_name`]: crate::profile::set_display_name
 
@@ -63,18 +63,24 @@ pub mod v3 {
         }
     }
 
+    #[doc(hidden)]
+    #[cfg(feature = "client")]
+    #[derive(serde::Serialize, ruma_common::api::OutgoingBodyJson)]
+    #[serde(transparent)]
+    pub struct RequestBody(ProfileFieldValue);
+
     #[cfg(feature = "client")]
     impl ruma_common::api::OutgoingRequest for Request {
+        type Body = RequestBody;
         type EndpointError = Error;
         type IncomingResponse = Response;
 
-        fn try_into_http_request<T: Default + bytes::BufMut + AsRef<[u8]>>(
+        fn try_into_http_request_inner(
             self,
             base_url: &str,
-            access_token: ruma_common::api::auth_scheme::SendAccessToken<'_>,
             considering: std::borrow::Cow<'_, ruma_common::api::SupportedVersions>,
-        ) -> Result<http::Request<T>, ruma_common::api::error::IntoHttpError> {
-            use ruma_common::api::{Metadata, auth_scheme::AuthScheme, path_builder::PathBuilder};
+        ) -> Result<http::Request<RequestBody>, ruma_common::api::error::IntoHttpError> {
+            use ruma_common::api::{Metadata, path_builder::PathBuilder};
 
             use crate::profile::field_existed_before_extended_profiles;
 
@@ -101,15 +107,10 @@ pub mod v3 {
                 )?
             };
 
-            let mut http_request = http::Request::builder()
+            let http_request = http::Request::builder()
                 .method(Self::METHOD)
                 .uri(url)
-                .header(http::header::CONTENT_TYPE, ruma_common::http_headers::APPLICATION_JSON)
-                .body(ruma_common::serde::json_to_buf(&self.value)?)?;
-
-            Self::Authentication::add_authentication(&mut http_request, access_token).map_err(
-                |error| ruma_common::api::error::IntoHttpError::Authentication(error.into()),
-            )?;
+                .body(RequestBody(self.value))?;
 
             Ok(http_request)
         }
@@ -120,28 +121,20 @@ pub mod v3 {
         type EndpointError = Error;
         type OutgoingResponse = Response;
 
-        fn try_from_http_request<B, S>(
-            request: http::Request<B>,
-            path_args: &[S],
-        ) -> Result<Self, ruma_common::api::error::FromHttpRequestError>
-        where
-            B: AsRef<[u8]>,
-            S: AsRef<str>,
-        {
+        fn try_from_http_request_inner(
+            request: http::Request<&[u8]>,
+            path_args: &[&str],
+        ) -> Result<Self, ruma_common::api::error::DeserializationError> {
             use ruma_common::profile::{ProfileFieldName, ProfileFieldValueVisitor};
             use serde::de::{Deserializer, Error as _};
-
-            Self::check_request_method(request.method())?;
 
             let (user_id, field): (OwnedUserId, ProfileFieldName) =
                 serde::Deserialize::deserialize(serde::de::value::SeqDeserializer::<
                     _,
                     serde::de::value::Error,
-                >::new(
-                    path_args.iter().map(::std::convert::AsRef::as_ref),
-                ))?;
+                >::new(path_args.iter().copied()))?;
 
-            let value = serde_json::Deserializer::from_slice(request.body().as_ref())
+            let value = serde_json::Deserializer::from_slice(request.body())
                 .deserialize_map(ProfileFieldValueVisitor::new(Some(field.clone())))?
                 .ok_or_else(|| serde_json::Error::custom(format!("missing field `{field}`")))?;
 
@@ -188,7 +181,7 @@ mod tests_client {
 
     use http::header;
     use ruma_common::{
-        api::{OutgoingRequest, SupportedVersions, auth_scheme::SendAccessToken},
+        api::{OutgoingRequestExt as _, SupportedVersions, auth_scheme::SendAccessToken},
         owned_mxc_uri, owned_user_id,
         profile::ProfileFieldValue,
     };
@@ -321,7 +314,7 @@ mod tests_client {
 #[cfg(all(test, feature = "server"))]
 mod tests_server {
     use assert_matches2::assert_let;
-    use ruma_common::{api::IncomingRequest, profile::ProfileFieldValue};
+    use ruma_common::{api::IncomingRequestExt as _, profile::ProfileFieldValue};
     use serde_json::{json, to_vec as to_json_vec};
 
     use super::v3::Request;
@@ -337,7 +330,7 @@ mod tests_server {
             http::Request::put(
                 "http://localhost/_matrix/client/v3/profile/@alice:localhost/displayname",
             )
-            .body(body)
+            .body(body.as_slice())
             .unwrap(),
             &["@alice:localhost", "displayname"],
         )
@@ -359,7 +352,7 @@ mod tests_server {
             http::Request::put(
                 "http://localhost/_matrix/client/v3/profile/@alice:localhost/displayname",
             )
-            .body(body)
+            .body(body.as_slice())
             .unwrap(),
             &["@alice:localhost", "displayname"],
         )

@@ -10,15 +10,15 @@ pub mod unstable_msc4108 {
 
     use http::header::{CONTENT_TYPE, ETAG, EXPIRES, LAST_MODIFIED};
     #[cfg(feature = "client")]
-    use ruma_common::api::error::FromHttpResponseError;
+    use ruma_common::api::BytesBody;
     use ruma_common::{
         api::{
             auth_scheme::NoAccessToken,
-            error::{Error, HeaderDeserializationError},
+            error::{DeserializationError, Error, HeaderDeserializationError},
         },
+        http_headers::TEXT_PLAIN,
         metadata,
     };
-    use serde::{Deserialize, Serialize};
     use url::Url;
     use web_time::SystemTime;
 
@@ -41,28 +41,27 @@ pub mod unstable_msc4108 {
 
     #[cfg(feature = "client")]
     impl ruma_common::api::OutgoingRequest for Request {
+        type Body = BytesBody;
         type EndpointError = Error;
         type IncomingResponse = Response;
 
-        fn try_into_http_request<T: Default + bytes::BufMut>(
+        fn try_into_http_request_inner(
             self,
             base_url: &str,
-            _: ruma_common::api::auth_scheme::SendAccessToken<'_>,
             considering: std::borrow::Cow<'_, ruma_common::api::SupportedVersions>,
-        ) -> Result<http::Request<T>, ruma_common::api::error::IntoHttpError> {
+        ) -> Result<http::Request<BytesBody>, ruma_common::api::error::IntoHttpError> {
             use http::header::CONTENT_LENGTH;
             use ruma_common::api::Metadata;
 
             let url = Self::make_endpoint_url(considering, base_url, &[], "")?;
-            let body = self.content.as_bytes();
-            let content_length = body.len();
+            let content_length = self.content.len();
 
             Ok(http::Request::builder()
                 .method(Self::METHOD)
                 .uri(url)
-                .header(CONTENT_TYPE, "text/plain")
+                .header(CONTENT_TYPE, TEXT_PLAIN)
                 .header(CONTENT_LENGTH, content_length)
-                .body(ruma_common::serde::slice_to_buf(body))?)
+                .body(BytesBody(self.content.into()))?)
         }
     }
 
@@ -71,36 +70,27 @@ pub mod unstable_msc4108 {
         type EndpointError = Error;
         type OutgoingResponse = Response;
 
-        fn try_from_http_request<B, S>(
-            request: http::Request<B>,
-            _path_args: &[S],
-        ) -> Result<Self, ruma_common::api::error::FromHttpRequestError>
-        where
-            B: AsRef<[u8]>,
-            S: AsRef<str>,
-        {
-            const EXPECTED_CONTENT_TYPE: &str = "text/plain";
-
-            use ruma_common::api::error::DeserializationError;
-
-            Self::check_request_method(request.method())?;
-
+        fn try_from_http_request_inner(
+            request: http::Request<&[u8]>,
+            _path_args: &[&str],
+        ) -> Result<Self, DeserializationError> {
             let content_type = request
                 .headers()
                 .get(CONTENT_TYPE)
                 .ok_or(HeaderDeserializationError::MissingHeader(CONTENT_TYPE.to_string()))?;
 
-            let content_type = content_type.to_str()?;
-
-            if content_type != EXPECTED_CONTENT_TYPE {
+            if content_type != TEXT_PLAIN {
                 Err(HeaderDeserializationError::InvalidHeaderValue {
                     header: CONTENT_TYPE.to_string(),
-                    expected: EXPECTED_CONTENT_TYPE.to_owned(),
-                    unexpected: content_type.to_owned(),
+                    expected: TEXT_PLAIN
+                        .to_str()
+                        .expect("expected content type should be a valid static string")
+                        .to_owned(),
+                    unexpected: content_type.to_str()?.to_owned(),
                 }
                 .into())
             } else {
-                let body = request.into_body().as_ref().to_vec();
+                let body = request.into_body().to_vec();
                 let content = String::from_utf8(body)
                     .map_err(|e| DeserializationError::Utf8(e.utf8_error()))?;
 
@@ -136,8 +126,11 @@ pub mod unstable_msc4108 {
         pub last_modified: SystemTime,
     }
 
-    #[derive(Serialize, Deserialize)]
-    struct ResponseBody {
+    #[doc(hidden)]
+    #[derive(ruma_common::serde::_FakeDeriveSerde)]
+    #[cfg_attr(feature = "server", derive(serde::Serialize, ruma_common::api::OutgoingBodyJson))]
+    #[cfg_attr(feature = "client", derive(serde::Deserialize))]
+    pub struct ResponseBody {
         url: Url,
     }
 
@@ -145,18 +138,10 @@ pub mod unstable_msc4108 {
     impl ruma_common::api::IncomingResponse for Response {
         type EndpointError = Error;
 
-        fn try_from_http_response<T: AsRef<[u8]>>(
-            response: http::Response<T>,
-        ) -> Result<Self, FromHttpResponseError<Self::EndpointError>> {
-            use ruma_common::api::EndpointError;
-
-            if response.status().as_u16() >= 400 {
-                return Err(FromHttpResponseError::Server(
-                    Self::EndpointError::from_http_response(response),
-                ));
-            }
-
-            let get_date = |header: http::HeaderName| -> Result<SystemTime, FromHttpResponseError<Self::EndpointError>> {
+        fn try_from_http_response_inner(
+            response: http::Response<&[u8]>,
+        ) -> Result<Self, DeserializationError> {
+            let get_date = |header: http::HeaderName| -> Result<SystemTime, DeserializationError> {
                 let date = response
                     .headers()
                     .get(&header)
@@ -176,7 +161,7 @@ pub mod unstable_msc4108 {
             let expires = get_date(EXPIRES)?;
             let last_modified = get_date(LAST_MODIFIED)?;
 
-            let body: ResponseBody = serde_json::from_slice(response.body().as_ref())?;
+            let body: ResponseBody = serde_json::from_slice(response.body())?;
 
             Ok(Self { url: body.url, etag, expires, last_modified })
         }
@@ -184,21 +169,21 @@ pub mod unstable_msc4108 {
 
     #[cfg(feature = "server")]
     impl ruma_common::api::OutgoingResponse for Response {
-        fn try_into_http_response<T: Default + bytes::BufMut>(
+        type Body = ResponseBody;
+
+        fn try_into_http_response_inner(
             self,
-        ) -> Result<http::Response<T>, ruma_common::api::error::IntoHttpError> {
+        ) -> Result<http::Response<Self::Body>, ruma_common::api::error::IntoHttpError> {
             use http::header::{CACHE_CONTROL, PRAGMA};
             use ruma_common::http_headers::system_time_to_http_date;
 
             let body = ResponseBody { url: self.url };
-            let body = ruma_common::serde::json_to_buf(&body)?;
 
             let expires = system_time_to_http_date(&self.expires)?;
             let last_modified = system_time_to_http_date(&self.last_modified)?;
 
             Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
-                .header(CONTENT_TYPE, ruma_common::http_headers::APPLICATION_JSON)
                 .header(PRAGMA, "no-cache")
                 .header(CACHE_CONTROL, "no-store")
                 .header(ETAG, self.etag)

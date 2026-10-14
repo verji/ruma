@@ -7,7 +7,7 @@ license = "MIT"
 name = "ruma-client-api"
 readme = "README.md"
 repository = "https://github.com/ruma/ruma"
-version = "0.24.0"
+version = "0.25.0"
 edition = "2024"
 rust-version = { workspace = true }
 
@@ -36,7 +36,14 @@ compat-get-3pids = []
 # since that's what Synapse sends.
 compat-upload-signatures = []
 
-unstable-msc2666 = ["ruma-common/unstable-msc2666"]
+# unstable: by using any of the below features, you opt out of all semver guarantees
+#           that Ruma otherwise provides!
+
+# Allow name and avatar fields for rooms and hero users (in a sync v5 response)
+# to be ignored if they have an invalid format and their deserialization fails.
+unstable-compat-lax-syncv5-deser = ["unstable-msc4186"]
+
+unstable-msc1763 = ["ruma-events/unstable-msc1763"]
 unstable-msc2448 = []
 unstable-msc2654 = []
 unstable-msc3488 = []
@@ -48,14 +55,19 @@ unstable-msc4140 = ["ruma-common/unstable-msc4140"]
 unstable-msc4143 = []
 unstable-msc4186 = ["ruma-common/unstable-msc4186"]
 unstable-msc4195 = ["unstable-msc4143"]
+# Profile Updates Sliding Sync Extension
+unstable-msc4262 = ["ruma-common/unstable-msc4262"]
 unstable-msc4293 = ["ruma-events/unstable-msc4293"]
 # Thread subscription support.
 unstable-msc4306 = []
 unstable-msc4308 = []
+unstable-msc4354 = ["ruma-events/unstable-msc4354"]
 unstable-msc4383 = []
-unstable-msc4388 = []
+unstable-msc4388 = ["ruma-common/unstable-msc4388"]
 unstable-msc4439 = []
 unstable-msc4466 = []
+unstable-msc4480 = ["unstable-msc4354"]
+unstable-msc4484 = ["ruma-common/unstable-msc4484"]
 
 [dependencies]
 as_variant = { workspace = true }

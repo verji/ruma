@@ -1,17 +1,17 @@
 use base64::{Engine, alphabet};
 use ruma_common::{
     CanonicalJsonObject, CanonicalJsonValue,
-    canonical_json::{CanonicalJsonObjectExt, redact},
+    canonical_json::{CanonicalJsonObjectExt, RedactingSerializer},
     room_version_rules::{EventIdFormatVersion, RoomVersionRules},
     serde::{Base64, base64::Standard},
 };
 use sha2::{Digest, Sha256};
 
-use crate::{JsonError, verify::to_canonical_json_string_with_fields_to_remove};
+use crate::JsonError;
 
 /// The [maximum size allowed] for a PDU.
 ///
-/// [maximum size allowed]: https://spec.matrix.org/v1.18/client-server-api/#size-limits
+/// [maximum size allowed]: https://spec.matrix.org/v1.19/client-server-api/#size-limits
 const MAX_PDU_BYTES: usize = 65_535;
 
 /// The fields to remove from a JSON object when creating a content hash of an event.
@@ -81,7 +81,7 @@ static REFERENCE_HASH_FIELDS_TO_REMOVE: &[&str] = &["signatures", "unsigned"];
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// [content hash]: https://spec.matrix.org/v1.18/server-server-api/#calculating-the-content-hash-for-an-event
+/// [content hash]: https://spec.matrix.org/v1.19/server-server-api/#calculating-the-content-hash-for-an-event
 pub fn add_content_hash_to_event(object: &mut CanonicalJsonObject) -> Result<(), JsonError> {
     let hash = content_hash(object)?;
 
@@ -104,10 +104,11 @@ pub fn add_content_hash_to_event(object: &mut CanonicalJsonObject) -> Result<(),
 ///
 /// Returns an error if the event is too large.
 ///
-/// [content hash]: https://spec.matrix.org/v1.18/server-server-api/#calculating-the-content-hash-for-an-event
+/// [content hash]: https://spec.matrix.org/v1.19/server-server-api/#calculating-the-content-hash-for-an-event
 pub fn content_hash(object: &CanonicalJsonObject) -> Result<Base64<Standard, [u8; 32]>, JsonError> {
-    let json =
-        to_canonical_json_string_with_fields_to_remove(object, CONTENT_HASH_FIELDS_TO_REMOVE)?;
+    let json = RedactingSerializer::new()
+        .custom_redacted_root_fields(CONTENT_HASH_FIELDS_TO_REMOVE)
+        .serialize(object)?;
 
     if json.len() > MAX_PDU_BYTES {
         return Err(JsonError::PduTooLarge);
@@ -145,17 +146,15 @@ pub fn content_hash(object: &CanonicalJsonObject) -> Result<Base64<Standard, [u8
 ///
 /// Returns an error if the event is too large or redaction fails.
 ///
-/// [reference hash]: https://spec.matrix.org/v1.18/server-server-api#calculating-the-reference-hash-for-an-event
+/// [reference hash]: https://spec.matrix.org/v1.19/server-server-api#calculating-the-reference-hash-for-an-event
 pub fn reference_hash(
     object: &CanonicalJsonObject,
     rules: &RoomVersionRules,
 ) -> Result<String, JsonError> {
-    let redacted_value = redact(object.clone(), &rules.redaction, None)?;
-
-    let json = to_canonical_json_string_with_fields_to_remove(
-        &redacted_value,
-        REFERENCE_HASH_FIELDS_TO_REMOVE,
-    )?;
+    let json = RedactingSerializer::new()
+        .rules(&rules.redaction)
+        .custom_redacted_root_fields(REFERENCE_HASH_FIELDS_TO_REMOVE)
+        .serialize(object)?;
 
     if json.len() > MAX_PDU_BYTES {
         return Err(JsonError::PduTooLarge);

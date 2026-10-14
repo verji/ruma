@@ -34,10 +34,18 @@ pub trait AuthScheme: Sized {
     ///
     /// Returns an error if the endpoint requires authentication but the request doesn't provide it,
     /// or if the output fails to deserialize to the proper format.
-    fn extract_authentication<T: AsRef<[u8]>>(
+    fn extract_authentication<T>(
         request: &http::Request<T>,
     ) -> Result<Self::Output, Self::ExtractAuthenticationError>;
 }
+
+/// A marker trait indicating that endpoints which use this auth scheme
+/// require clients authenticated using the [OAuth 2.0 API] to request
+/// certain scopes. See [`Metadata::required_client_scopes()`] for more information.
+///
+/// [OAuth 2.0 API]: https://spec.matrix.org/v1.19/client-server-api/#oauth-20-api
+/// [`Metadata::required_client_scopes()`]: super::Metadata::required_client_scopes
+pub trait ClientScopedAuthScheme: AuthScheme {}
 
 /// No authentication is performed.
 #[derive(Debug, Clone, Copy, Default)]
@@ -57,7 +65,7 @@ impl AuthScheme for NoAuthentication {
     }
 
     /// Since this endpoint doesn't expect any authentication, this is a noop.
-    fn extract_authentication<T: AsRef<[u8]>>(
+    fn extract_authentication<T>(
         _request: &http::Request<T>,
     ) -> Result<(), Self::ExtractAuthenticationError> {
         Ok(())
@@ -89,7 +97,7 @@ impl AuthScheme for NoAccessToken {
     }
 
     /// Since this endpoint doesn't expect any authentication, this is a noop.
-    fn extract_authentication<T: AsRef<[u8]>>(
+    fn extract_authentication<T>(
         _request: &http::Request<T>,
     ) -> Result<(), Self::ExtractAuthenticationError> {
         Ok(())
@@ -110,7 +118,7 @@ impl AuthScheme for AccessToken {
     type Output = String;
     type ExtractAuthenticationError = ExtractTokenError;
 
-    fn add_authentication<T: AsRef<[u8]>>(
+    fn add_authentication<T>(
         request: &mut http::Request<T>,
         access_token: SendAccessToken<'_>,
     ) -> Result<(), Self::AddAuthenticationError> {
@@ -120,12 +128,14 @@ impl AuthScheme for AccessToken {
         Ok(add_access_token_as_authorization_header(request.headers_mut(), token)?)
     }
 
-    fn extract_authentication<T: AsRef<[u8]>>(
+    fn extract_authentication<T>(
         request: &http::Request<T>,
     ) -> Result<String, Self::ExtractAuthenticationError> {
         extract_bearer_or_query_token(request)?.ok_or(ExtractTokenError::MissingAccessToken)
     }
 }
+
+impl ClientScopedAuthScheme for AccessToken {}
 
 /// Authentication is optional, and it is performed by including an access token in the
 /// `Authentication` http header, or an `access_token` query parameter.
@@ -152,12 +162,14 @@ impl AuthScheme for AccessTokenOptional {
         Ok(())
     }
 
-    fn extract_authentication<T: AsRef<[u8]>>(
+    fn extract_authentication<T>(
         request: &http::Request<T>,
     ) -> Result<Option<String>, Self::ExtractAuthenticationError> {
         extract_bearer_or_query_token(request)
     }
 }
+
+impl ClientScopedAuthScheme for AccessTokenOptional {}
 
 /// Authentication is required, and can only be performed for appservices, by including an
 /// appservice access token in the `Authentication` http header, or `access_token` query
@@ -184,7 +196,7 @@ impl AuthScheme for AppserviceToken {
         Ok(add_access_token_as_authorization_header(request.headers_mut(), token)?)
     }
 
-    fn extract_authentication<T: AsRef<[u8]>>(
+    fn extract_authentication<T>(
         request: &http::Request<T>,
     ) -> Result<String, Self::ExtractAuthenticationError> {
         extract_bearer_or_query_token(request)?.ok_or(ExtractTokenError::MissingAccessToken)
@@ -217,7 +229,7 @@ impl AuthScheme for AppserviceTokenOptional {
         Ok(())
     }
 
-    fn extract_authentication<T: AsRef<[u8]>>(
+    fn extract_authentication<T>(
         request: &http::Request<T>,
     ) -> Result<Option<String>, Self::ExtractAuthenticationError> {
         extract_bearer_or_query_token(request)
@@ -225,7 +237,7 @@ impl AuthScheme for AppserviceTokenOptional {
 }
 
 /// Add the given access token as an `Authorization` HTTP header to the given map.
-fn add_access_token_as_authorization_header(
+pub fn add_access_token_as_authorization_header(
     headers: &mut HeaderMap,
     token: &str,
 ) -> Result<(), header::InvalidHeaderValue> {
@@ -235,7 +247,7 @@ fn add_access_token_as_authorization_header(
 
 /// Extract the access token from the `Authorization` HTTP header or the query string of the given
 /// request.
-fn extract_bearer_or_query_token<T>(
+pub fn extract_bearer_or_query_token<T>(
     request: &http::Request<T>,
 ) -> Result<Option<String>, ExtractTokenError> {
     if let Some(token) = extract_bearer_token_from_authorization_header(request.headers())? {

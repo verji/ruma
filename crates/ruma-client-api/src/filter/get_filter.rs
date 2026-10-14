@@ -5,7 +5,7 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv3useruseridfilterfilterid
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv3useruseridfilterfilterid
 
     use ruma_common::{
         OwnedUserId,
@@ -59,12 +59,12 @@ pub mod v3 {
         }
     }
 
-    #[cfg(all(test, any(feature = "client", feature = "server")))]
+    #[cfg(test)]
     mod tests {
         #[cfg(feature = "client")]
         #[test]
         fn deserialize_response() {
-            use ruma_common::api::IncomingResponse;
+            use ruma_common::api::IncomingResponseExt as _;
 
             let res = super::Response::try_from_http_response(
                 http::Response::builder().body(b"{}" as &[u8]).unwrap(),
@@ -76,7 +76,7 @@ pub mod v3 {
         #[cfg(feature = "server")]
         #[test]
         fn serialize_response() {
-            use ruma_common::api::OutgoingResponse;
+            use ruma_common::api::OutgoingResponseExt as _;
 
             use crate::filter::FilterDefinition;
 

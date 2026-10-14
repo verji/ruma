@@ -1,6 +1,6 @@
 [package]
 name = "ruma-common"
-version = "0.19.0"
+version = "0.20.0"
 description = "Common types for other ruma crates."
 homepage = "https://ruma.dev/"
 keywords = ["matrix", "chat", "messaging", "ruma"]
@@ -30,7 +30,6 @@ api = ["dep:date_header", "dep:http", "dep:konst"]
 js = ["getrandom?/wasm_js", "uuid?/js"]
 rand = ["dep:rand", "dep:getrandom", "dep:uuid"]
 
-unstable-msc2666 = []
 unstable-msc2870 = []
 unstable-msc3417 = []
 unstable-msc3768 = []
@@ -41,10 +40,20 @@ unstable-msc3932 = ["unstable-msc3931"]
 unstable-msc4108 = []
 unstable-msc4140 = []
 unstable-msc4186 = []
+# Profile Updates Sliding Sync Extension
+unstable-msc4262 = []
 # Thread subscriptions.
 unstable-msc4306 = []
+# Secure out-of-band channel for QR code sign in
+unstable-msc4388 = []
 # M_SENDER_IGNORED
 unstable-msc4406 = []
+# User Status Profile Fields.
+unstable-msc4426 = []
+unstable-msc4484 = []
+unstable-msc4494 = []
+# Selective Presence
+unstable-msc4495 = []
 
 # Allow IDs to exceed 255 bytes.
 compat-arbitrary-length-ids = ["ruma-identifiers-validation/compat-arbitrary-length-ids"]
@@ -83,9 +92,11 @@ ruma-macros = { workspace = true }
 serde = { workspace = true }
 serde_html_form = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
+smallvec = { version = "1.15.2", features = ["const_generics", "union"], optional = true }
 thiserror = { workspace = true }
 time = "0.3.47"
 tracing = { workspace = true, features = ["attributes"] }
+triomphe = { version = "0.1.16", optional = true }
 url = { workspace = true }
 uuid = { version = "1.0.0", optional = true, features = ["v4"] }
 web-time = { workspace = true }

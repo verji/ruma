@@ -5,18 +5,20 @@
 pub mod v2 {
     //! `/v2/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/identity-service-api/#get_matrixidentityv2account
+    //! [spec]: https://spec.matrix.org/v1.19/identity-service-api/#get_matrixidentityv2account
 
     use ruma_common::{
         OwnedUserId,
-        api::{auth_scheme::AccessToken, request, response},
+        api::{request, response},
         metadata,
     };
+
+    use crate::IdentityServiceToken;
 
     metadata! {
         method: POST,
         rate_limited: false,
-        authentication: AccessToken,
+        authentication: IdentityServiceToken,
         history: {
             1.0 => "/_matrix/identity/v2/account",
         }

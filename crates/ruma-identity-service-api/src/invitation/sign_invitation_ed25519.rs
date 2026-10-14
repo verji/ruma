@@ -5,19 +5,21 @@
 pub mod v2 {
     //! `/v2/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/identity-service-api/#post_matrixidentityv2sign-ed25519
+    //! [spec]: https://spec.matrix.org/v1.19/identity-service-api/#post_matrixidentityv2sign-ed25519
 
     use ruma_common::{
         OwnedUserId, ServerSignatures,
-        api::{auth_scheme::AccessToken, request, response},
+        api::{request, response},
         metadata,
         serde::Base64,
     };
 
+    use crate::IdentityServiceToken;
+
     metadata! {
         method: POST,
         rate_limited: false,
-        authentication: AccessToken,
+        authentication: IdentityServiceToken,
         history: {
             1.0 => "/_matrix/identity/v2/sign-ed25519",
         }

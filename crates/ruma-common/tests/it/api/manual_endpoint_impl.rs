@@ -6,16 +6,17 @@
 use std::borrow::Cow;
 
 use bytes::BufMut;
-use http::{header::CONTENT_TYPE, method::Method};
+use http::method::Method;
 use ruma_common::{
     OwnedRoomAliasId, OwnedRoomId,
     api::{
-        EndpointError, IncomingRequest, IncomingResponse, MatrixVersion, Metadata, OutgoingRequest,
-        OutgoingResponse, SupportedVersions,
+        EmptyBody, IncomingRequest, IncomingResponse, MatrixVersion, Metadata, OutgoingBody,
+        OutgoingRequest, OutgoingResponse, SupportedVersions,
         auth_scheme::NoAuthentication,
-        error::{Error, FromHttpRequestError, FromHttpResponseError, IntoHttpError},
+        error::{DeserializationError, Error, IntoHttpError},
         path_builder::{StablePathSelector, VersionHistory},
     },
+    serde::json_to_buf,
 };
 use serde::{Deserialize, Serialize};
 
@@ -58,15 +59,15 @@ impl Metadata for Request {
 }
 
 impl OutgoingRequest for Request {
+    type Body = RequestBody;
     type EndpointError = Error;
     type IncomingResponse = Response;
 
-    fn try_into_http_request<T: Default + BufMut>(
+    fn try_into_http_request_inner(
         self,
         base_url: &str,
-        _input: (),
         considering: Cow<'_, SupportedVersions>,
-    ) -> Result<http::Request<T>, IntoHttpError> {
+    ) -> Result<http::Request<RequestBody>, IntoHttpError> {
         let url = Self::make_endpoint_url(considering, base_url, &[&self.room_alias], "")?;
 
         let request_body = RequestBody { room_id: self.room_id };
@@ -74,7 +75,7 @@ impl OutgoingRequest for Request {
         let http_request = http::Request::builder()
             .method(Self::METHOD)
             .uri(url)
-            .body(ruma_common::serde::json_to_buf(&request_body)?)
+            .body(request_body)
             // this cannot fail because we don't give user-supplied data to any of the
             // builder methods
             .unwrap();
@@ -87,32 +88,36 @@ impl IncomingRequest for Request {
     type EndpointError = Error;
     type OutgoingResponse = Response;
 
-    fn try_from_http_request<B, S>(
-        request: http::Request<B>,
-        path_args: &[S],
-    ) -> Result<Self, FromHttpRequestError>
-    where
-        B: AsRef<[u8]>,
-        S: AsRef<str>,
-    {
-        Self::check_request_method(request.method())?;
-
+    fn try_from_http_request_inner(
+        request: http::Request<&[u8]>,
+        path_args: &[&str],
+    ) -> Result<Self, DeserializationError> {
         let (room_alias,) = Deserialize::deserialize(serde::de::value::SeqDeserializer::<
             _,
             serde::de::value::Error,
-        >::new(
-            path_args.iter().map(::std::convert::AsRef::as_ref),
-        ))?;
+        >::new(path_args.iter().copied()))?;
 
-        let request_body: RequestBody = serde_json::from_slice(request.body().as_ref())?;
+        let request_body: RequestBody = serde_json::from_slice(request.into_body())?;
 
         Ok(Request { room_id: request_body.room_id, room_alias })
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct RequestBody {
+pub struct RequestBody {
     room_id: OwnedRoomId,
+}
+
+impl OutgoingBody for RequestBody {
+    type Error = serde_json::Error;
+
+    fn content_type(&self) -> Option<http::HeaderValue> {
+        Some(ruma_common::http_headers::APPLICATION_JSON)
+    }
+
+    fn try_into_buf<T: Default + BufMut + AsRef<[u8]>>(self) -> serde_json::Result<T> {
+        json_to_buf(&self)
+    }
 }
 
 /// The response to a request to create a new room alias.
@@ -122,26 +127,17 @@ pub struct Response;
 impl IncomingResponse for Response {
     type EndpointError = Error;
 
-    fn try_from_http_response<T: AsRef<[u8]>>(
-        http_response: http::Response<T>,
-    ) -> Result<Self, FromHttpResponseError<Error>> {
-        if http_response.status().as_u16() < 400 {
-            Ok(Response)
-        } else {
-            Err(FromHttpResponseError::Server(Error::from_http_response(http_response)))
-        }
+    fn try_from_http_response_inner(
+        _http_response: http::Response<&[u8]>,
+    ) -> Result<Self, DeserializationError> {
+        Ok(Response)
     }
 }
 
 impl OutgoingResponse for Response {
-    fn try_into_http_response<T: Default + BufMut>(
-        self,
-    ) -> Result<http::Response<T>, IntoHttpError> {
-        let response = http::Response::builder()
-            .header(CONTENT_TYPE, ruma_common::http_headers::APPLICATION_JSON)
-            .body(ruma_common::serde::slice_to_buf(b"{}"))
-            .unwrap();
+    type Body = EmptyBody<false>;
 
-        Ok(response)
+    fn try_into_http_response_inner(self) -> Result<http::Response<Self::Body>, IntoHttpError> {
+        Ok(http::Response::new(EmptyBody))
     }
 }

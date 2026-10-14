@@ -56,8 +56,8 @@
 //! signatures and hashes on an event, use the [`verify_event()`] function. See the documentation
 //! for these respective functions for more details and full examples of use.
 //!
-//! [canonical JSON]: https://spec.matrix.org/v1.18/appendices/#canonical-json
-//! [room version 6]: https://spec.matrix.org/v1.18/rooms/v6/
+//! [canonical JSON]: https://spec.matrix.org/v1.19/appendices/#canonical-json
+//! [room version 6]: https://spec.matrix.org/v1.19/rooms/v6/
 
 #![warn(missing_docs)]
 
@@ -71,7 +71,7 @@ pub use self::{
     verify::{
         PublicKeyMap, PublicKeySet, Verified, required_server_signatures_to_verify_event,
         to_canonical_json_string_for_signing, verify_canonical_json_bytes, verify_event,
-        verify_json,
+        verify_json, verify_policy_server_signature,
     },
 };
 
@@ -85,7 +85,7 @@ mod verify;
 mod tests {
     use std::collections::BTreeMap;
 
-    use pkcs8::{PrivateKeyInfo, der::Decode};
+    use pkcs8::{PrivateKeyInfoRef, der::Decode};
     use ruma_common::{
         room_version_rules::{RedactionRules, RoomVersionRules},
         serde::{Base64, base64::Standard},
@@ -108,7 +108,14 @@ mod tests {
 
     /// Convenience method for getting the public key as a string
     fn public_key_string() -> Base64 {
-        Base64::new(PrivateKeyInfo::from_der(&pkcs8()).unwrap().public_key.unwrap().to_owned())
+        Base64::new(
+            PrivateKeyInfoRef::from_der(&pkcs8())
+                .unwrap()
+                .public_key
+                .unwrap()
+                .raw_bytes()
+                .to_owned(),
+        )
     }
 
     /// Convenience for converting a string of JSON into its canonical form.

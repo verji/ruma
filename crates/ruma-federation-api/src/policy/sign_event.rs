@@ -10,12 +10,12 @@
 //! Whether a signature is required by a Policy Server further depends on whether the room has
 //! enabled a Policy Server.
 //!
-//! [Policy Server]: https://spec.matrix.org/v1.18/server-server-api/#policy-servers
+//! [Policy Server]: https://spec.matrix.org/v1.19/server-server-api/#policy-servers
 
 pub mod v1 {
     //! `/v1/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/server-server-api/#post_matrixpolicyv1sign
+    //! [spec]: https://spec.matrix.org/v1.19/server-server-api/#post_matrixpolicyv1sign
 
     use ruma_common::{
         OwnedServerName, ServerName, ServerSignatures as ServerSignaturesMap,
@@ -98,7 +98,7 @@ mod tests {
     #[cfg(feature = "server")]
     #[test]
     fn construct_and_serialize_response() {
-        use ruma_common::{api::OutgoingResponse, owned_server_name};
+        use ruma_common::{api::OutgoingResponseExt as _, owned_server_name};
         use serde_json::{Value as JsonValue, from_slice as from_json_slice, json};
 
         let response = Response::new(owned_server_name!("policy.example.org"), "zLFxllD0pbBuBpfHh8NuHNaICpReF/PAOpUQTsw+bFGKiGfDNAsnhcP7pbrmhhpfbOAxIdLraQLeeiXBryLmBw".to_owned());
@@ -118,14 +118,16 @@ mod tests {
     #[cfg(feature = "client")]
     #[test]
     fn deserialize_response() {
-        use ruma_common::{api::IncomingResponse, server_name};
-        use serde_json::{json, to_vec as to_json_vec};
+        use ruma_common::{api::IncomingResponseExt as _, server_name};
+        use serde_json::json;
 
-        let http_response = http::Response::new(to_json_vec(&json!({
+        let body = json!({
             "policy.example.org": {
                 "ed25519:policy_server": "zLFxllD0pbBuBpfHh8NuHNaICpReF/PAOpUQTsw+bFGKiGfDNAsnhcP7pbrmhhpfbOAxIdLraQLeeiXBryLmBw",
             },
-        })).unwrap());
+        })
+        .to_string();
+        let http_response = http::Response::new(body.as_bytes());
 
         let response = Response::try_from_http_response(http_response).unwrap();
 

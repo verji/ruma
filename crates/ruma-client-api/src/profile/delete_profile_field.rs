@@ -5,7 +5,7 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#delete_matrixclientv3profileuseridkeyname
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#delete_matrixclientv3profileuseridkeyname
 
     use ruma_common::{
         OwnedUserId,
@@ -23,7 +23,7 @@ pub mod v3 {
         authentication: AccessToken,
         history: {
             unstable("uk.tcpip.msc4133") => "/_matrix/client/unstable/uk.tcpip.msc4133/profile/{user_id}/{field}",
-            1.16 => "/_matrix/client/v3/profile/{user_id}/{field}",
+            1.16 | stable("uk.tcpip.msc4133.stable") => "/_matrix/client/v3/profile/{user_id}/{field}",
         }
     }
 

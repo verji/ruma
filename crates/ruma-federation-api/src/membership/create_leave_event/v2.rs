@@ -1,6 +1,6 @@
 //! `/v2/` ([spec])
 //!
-//! [spec]: https://spec.matrix.org/v1.18/server-server-api/#put_matrixfederationv2send_leaveroomideventid
+//! [spec]: https://spec.matrix.org/v1.19/server-server-api/#put_matrixfederationv2send_leaveroomideventid
 
 use ruma_common::{
     OwnedEventId, OwnedRoomId,
@@ -57,7 +57,7 @@ impl Response {
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
-    use ruma_common::api::OutgoingResponse;
+    use ruma_common::api::OutgoingResponseExt as _;
 
     use super::Response;
 

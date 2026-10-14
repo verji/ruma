@@ -5,7 +5,8 @@
 use std::{error::Error as StdError, fmt, num::ParseIntError, sync::Arc};
 
 use as_variant::as_variant;
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
+use ruma_macros::OutgoingBodyJson;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, from_slice as from_json_slice};
 use thiserror::Error;
@@ -74,12 +75,10 @@ impl fmt::Display for Error {
 impl StdError for Error {}
 
 impl OutgoingResponse for Error {
-    fn try_into_http_response<T: Default + BufMut>(
-        self,
-    ) -> Result<http::Response<T>, IntoHttpError> {
-        let mut builder = http::Response::builder()
-            .header(http::header::CONTENT_TYPE, ruma_common::http_headers::APPLICATION_JSON)
-            .status(self.status_code);
+    type Body = ErrorResponseBody;
+
+    fn try_into_http_response_inner(self) -> Result<http::Response<Self::Body>, IntoHttpError> {
+        let mut builder = http::Response::builder().status(self.status_code);
 
         // Add data in headers.
         if let Some(ErrorKind::LimitExceeded(LimitExceededErrorData {
@@ -90,27 +89,15 @@ impl OutgoingResponse for Error {
             builder = builder.header(http::header::RETRY_AFTER, header_value);
         }
 
-        builder
-            .body(match self.body {
-                ErrorBody::Standard(standard_body) => {
-                    ruma_common::serde::json_to_buf(&standard_body)?
-                }
-                ErrorBody::Json(json) => ruma_common::serde::json_to_buf(&json)?,
-                ErrorBody::NotJson { .. } => {
-                    return Err(IntoHttpError::Json(serde::ser::Error::custom(
-                        "attempted to serialize ErrorBody::NotJson",
-                    )));
-                }
-            })
-            .map_err(Into::into)
+        builder.body(ErrorResponseBody(self.body)).map_err(Into::into)
     }
 }
 
 impl EndpointError for Error {
-    fn from_http_response<T: AsRef<[u8]>>(response: http::Response<T>) -> Self {
+    fn from_http_response(response: http::Response<&[u8]>) -> Self {
         let status = response.status();
 
-        let body_bytes = &response.body().as_ref();
+        let body_bytes = response.body();
         let error_body: ErrorBody = match from_json_slice::<StandardErrorBody>(body_bytes) {
             Ok(mut standard_body) => {
                 let headers = response.headers();
@@ -191,6 +178,29 @@ impl StandardErrorBody {
     }
 }
 
+/// Helper type for the serialization of an [`ErrorBody`] as an HTTP response body.
+///
+/// This is a wrapper around `ErrorBody` that cannot implement `Serialize` and `Deserialize` because
+/// part of its serialization might occur in the HTTP headers.
+#[doc(hidden)]
+#[derive(OutgoingBodyJson)]
+pub struct ErrorResponseBody(ErrorBody);
+
+impl Serialize for ErrorResponseBody {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match &self.0 {
+            ErrorBody::Standard(standard_body) => standard_body.serialize(serializer),
+            ErrorBody::Json(json) => json.serialize(serializer),
+            ErrorBody::NotJson { .. } => {
+                Err(serde::ser::Error::custom("attempted to serialize ErrorBody::NotJson"))
+            }
+        }
+    }
+}
+
 /// An error when converting one of ruma's endpoint-specific request or response
 /// types to the corresponding http type.
 #[derive(Debug, Error)]
@@ -233,6 +243,21 @@ pub enum IntoHttpError {
     /// HTTP request construction failed.
     #[error("HTTP request construction failed: {0}")]
     Http(#[from] http::Error),
+}
+
+impl IntoHttpError {
+    /// Construct an [`Authentication`](Self::Authentication) error from the given underlying error.
+    pub fn authentication(
+        error: impl Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    ) -> Self {
+        Self::Authentication(error.into())
+    }
+}
+
+impl From<std::convert::Infallible> for IntoHttpError {
+    fn from(value: std::convert::Infallible) -> Self {
+        match value {}
+    }
 }
 
 impl From<http::header::InvalidHeaderValue> for IntoHttpError {

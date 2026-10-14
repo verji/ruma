@@ -5,7 +5,7 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#post_matrixclientv3joinroomidoralias
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#post_matrixclientv3joinroomidoralias
 
     use ruma_common::{
         OwnedRoomId, OwnedRoomOrAliasId, OwnedServerName,
@@ -67,9 +67,10 @@ pub mod v3 {
     }
 
     /// Data in the request's body.
-    #[cfg_attr(feature = "client", derive(serde::Serialize))]
+    #[doc(hidden)]
+    #[cfg_attr(feature = "client", derive(serde::Serialize, ruma_common::api::OutgoingBodyJson))]
     #[cfg_attr(feature = "server", derive(serde::Deserialize))]
-    struct RequestBody {
+    pub struct RequestBody {
         /// The signature of a `m.third_party_invite` token to prove that this user owns a third
         /// party identity which has been invited to the room.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,16 +83,16 @@ pub mod v3 {
 
     #[cfg(feature = "client")]
     impl ruma_common::api::OutgoingRequest for Request {
+        type Body = RequestBody;
         type EndpointError = Error;
         type IncomingResponse = Response;
 
-        fn try_into_http_request<T: Default + bytes::BufMut + AsRef<[u8]>>(
+        fn try_into_http_request_inner(
             self,
             base_url: &str,
-            access_token: ruma_common::api::auth_scheme::SendAccessToken<'_>,
             considering: std::borrow::Cow<'_, ruma_common::api::SupportedVersions>,
-        ) -> Result<http::Request<T>, ruma_common::api::error::IntoHttpError> {
-            use ruma_common::api::{Metadata, auth_scheme::AuthScheme};
+        ) -> Result<http::Request<RequestBody>, ruma_common::api::error::IntoHttpError> {
+            use ruma_common::api::Metadata;
 
             // Only send `server_name` if the `via` parameter is not supported by the server.
             // `via` was introduced in Matrix 1.12.
@@ -109,7 +110,7 @@ pub mod v3 {
             let query_string =
                 serde_html_form::to_string(RequestQuery { server_name, via: self.via })?;
 
-            let mut http_request = http::Request::builder()
+            let http_request = http::Request::builder()
                 .method(Self::METHOD)
                 .uri(Self::make_endpoint_url(
                     considering,
@@ -117,15 +118,10 @@ pub mod v3 {
                     &[&self.room_id_or_alias],
                     &query_string,
                 )?)
-                .header(http::header::CONTENT_TYPE, ruma_common::http_headers::APPLICATION_JSON)
-                .body(ruma_common::serde::json_to_buf(&RequestBody {
+                .body(RequestBody {
                     third_party_signed: self.third_party_signed,
                     reason: self.reason,
-                })?)?;
-
-            Self::Authentication::add_authentication(&mut http_request, access_token).map_err(
-                |error| ruma_common::api::error::IntoHttpError::Authentication(error.into()),
-            )?;
+                })?;
 
             Ok(http_request)
         }
@@ -136,23 +132,15 @@ pub mod v3 {
         type EndpointError = Error;
         type OutgoingResponse = Response;
 
-        fn try_from_http_request<B, S>(
-            request: http::Request<B>,
-            path_args: &[S],
-        ) -> Result<Self, ruma_common::api::error::FromHttpRequestError>
-        where
-            B: AsRef<[u8]>,
-            S: AsRef<str>,
-        {
-            Self::check_request_method(request.method())?;
-
+        fn try_from_http_request_inner(
+            request: http::Request<&[u8]>,
+            path_args: &[&str],
+        ) -> Result<Self, ruma_common::api::error::DeserializationError> {
             let (room_id_or_alias,) =
                 serde::Deserialize::deserialize(serde::de::value::SeqDeserializer::<
                     _,
                     serde::de::value::Error,
-                >::new(
-                    path_args.iter().map(::std::convert::AsRef::as_ref),
-                ))?;
+                >::new(path_args.iter().copied()))?;
 
             let request_query: RequestQuery =
                 serde_html_form::from_str(request.uri().query().unwrap_or(""))?;
@@ -162,7 +150,7 @@ pub mod v3 {
                 request_query.via
             };
 
-            let body: RequestBody = serde_json::from_slice(request.body().as_ref())?;
+            let body: RequestBody = serde_json::from_slice(request.body())?;
 
             Ok(Self {
                 room_id_or_alias,
@@ -200,7 +188,8 @@ pub mod v3 {
 
         use ruma_common::{
             api::{
-                MatrixVersion, OutgoingRequest, SupportedVersions, auth_scheme::SendAccessToken,
+                MatrixVersion, OutgoingRequestExt as _, SupportedVersions,
+                auth_scheme::SendAccessToken,
             },
             owned_room_id, owned_server_name,
         };
@@ -248,7 +237,7 @@ pub mod v3 {
 
     #[cfg(all(test, feature = "server"))]
     mod tests_server {
-        use ruma_common::{api::IncomingRequest as _, owned_server_name};
+        use ruma_common::{api::IncomingRequestExt as _, owned_server_name};
 
         use super::Request;
 

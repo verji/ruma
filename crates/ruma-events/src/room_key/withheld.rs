@@ -1,6 +1,6 @@
 //! Types for the [`m.room_key.withheld`] event.
 //!
-//! [`m.room_key.withheld`]: https://spec.matrix.org/v1.18/client-server-api/#mroom_keywithheld
+//! [`m.room_key.withheld`]: https://spec.matrix.org/v1.19/client-server-api/#mroom_keywithheld
 
 use std::borrow::Cow;
 
@@ -19,7 +19,7 @@ use crate::PrivOwnedStr;
 ///
 /// Typically encrypted as an `m.room.encrypted` event, then sent as a to-device event.
 ///
-/// [`m.room_key.withheld`]: https://spec.matrix.org/v1.18/client-server-api/#mroom_keywithheld
+/// [`m.room_key.withheld`]: https://spec.matrix.org/v1.19/client-server-api/#mroom_keywithheld
 #[derive(Clone, Debug, Serialize, EventContent)]
 #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[ruma_event(type = "m.room_key.withheld", kind = ToDevice)]
@@ -116,6 +116,12 @@ pub enum RoomKeyWithheldCodeInfo {
     #[serde(rename = "m.no_olm")]
     NoOlm,
 
+    /// `m.history_not_shared`
+    ///
+    /// The megolm session does not have the `shared_history` flag set.
+    #[serde(rename = "m.history_not_shared")]
+    HistoryNotShared,
+
     #[doc(hidden)]
     #[serde(untagged)]
     _Custom(Box<CustomRoomKeyWithheldCodeInfo>),
@@ -130,6 +136,7 @@ impl RoomKeyWithheldCodeInfo {
             Self::Unauthorized(_) => RoomKeyWithheldCode::Unauthorized,
             Self::Unavailable(_) => RoomKeyWithheldCode::Unavailable,
             Self::NoOlm => RoomKeyWithheldCode::NoOlm,
+            Self::HistoryNotShared => RoomKeyWithheldCode::HistoryNotShared,
             Self::_Custom(info) => info.code.as_str().into(),
         }
     }
@@ -241,6 +248,11 @@ pub enum RoomKeyWithheldCode {
     ///
     /// An olm session could not be established.
     NoOlm,
+
+    /// `m.history_not_shared`
+    ///
+    /// The megolm session does not have the `shared_history` flag set.
+    HistoryNotShared,
 
     #[doc(hidden)]
     _Custom(PrivOwnedStr),

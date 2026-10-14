@@ -5,11 +5,11 @@
 pub mod v2 {
     //! `/v2/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/identity-service-api/#post_matrixidentityv2store-invite
+    //! [spec]: https://spec.matrix.org/v1.19/identity-service-api/#post_matrixidentityv2store-invite
 
     use ruma_common::{
         OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId, OwnedUserId,
-        api::{auth_scheme::AccessToken, request, response},
+        api::{request, response},
         metadata,
         room::RoomType,
         third_party_invite::IdentityServerBase64PublicKey,
@@ -18,10 +18,12 @@ pub mod v2 {
     use ruma_events::room::third_party_invite::RoomThirdPartyInviteEventContent;
     use serde::{Deserialize, Serialize, ser::SerializeSeq};
 
+    use crate::IdentityServiceToken;
+
     metadata! {
         method: POST,
         rate_limited: false,
-        authentication: AccessToken,
+        authentication: IdentityServiceToken,
         history: {
             1.0 => "/_matrix/identity/v2/store-invite",
         }

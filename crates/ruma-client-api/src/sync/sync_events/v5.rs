@@ -218,6 +218,24 @@ pub mod request {
         )]
         pub thread_subscriptions: ThreadSubscriptions,
 
+        /// Configure the profiles extension.
+        #[cfg(feature = "unstable-msc4262")]
+        #[serde(
+            default,
+            skip_serializing_if = "Profiles::is_empty",
+            rename = "org.matrix.msc4262.profiles"
+        )]
+        pub profiles: Profiles,
+
+        /// Configure the sticky events extension.
+        #[cfg(feature = "unstable-msc4480")]
+        #[serde(
+            default,
+            skip_serializing_if = "StickyEvents::is_empty",
+            rename = "org.matrix.msc4354.sticky_events"
+        )]
+        pub sticky_events: StickyEvents,
+
         /// Extensions may add further fields to the list.
         #[serde(flatten)]
         other: BTreeMap<String, serde_json::Value>,
@@ -226,12 +244,29 @@ pub mod request {
     impl Extensions {
         /// Whether all fields are empty or `None`.
         pub fn is_empty(&self) -> bool {
-            self.to_device.is_empty()
+            let mut empty = self.to_device.is_empty()
                 && self.e2ee.is_empty()
                 && self.account_data.is_empty()
                 && self.receipts.is_empty()
                 && self.typing.is_empty()
-                && self.other.is_empty()
+                && self.other.is_empty();
+
+            #[cfg(feature = "unstable-msc4308")]
+            {
+                empty = empty && self.thread_subscriptions.is_empty();
+            }
+
+            #[cfg(feature = "unstable-msc4262")]
+            {
+                empty = empty && self.profiles.is_empty();
+            }
+
+            #[cfg(feature = "unstable-msc4480")]
+            {
+                empty = empty && self.sticky_events.is_empty();
+            }
+
+            empty
         }
     }
 
@@ -296,6 +331,36 @@ pub mod request {
         }
     }
 
+    /// Sticky events extension configuration.
+    ///
+    /// According to [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480).
+    #[cfg(feature = "unstable-msc4480")]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+    pub struct StickyEvents {
+        /// Activate or deactivate this extension.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub enabled: Option<bool>,
+
+        /// Maximum number of sticky events to return per response.
+        ///
+        /// Defaults to 100 (server-side) and the server may override it to a lower value.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub limit: Option<UInt>,
+
+        /// Return sticky events since this token only.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub since: Option<String>,
+    }
+
+    #[cfg(feature = "unstable-msc4480")]
+    impl StickyEvents {
+        /// Whether all fields are empty or `None`.
+        pub fn is_empty(&self) -> bool {
+            self.enabled.is_none() && self.limit.is_none() && self.since.is_none()
+        }
+    }
+
     /// E2EE extension configuration.
     ///
     /// According to [MSC3884](https://github.com/matrix-org/matrix-spec-proposals/pull/3884).
@@ -314,7 +379,7 @@ pub mod request {
         }
     }
 
-    /// Account-data extension .
+    /// Account-data extension.
     ///
     /// Not yet part of the spec proposal. Taken from the reference implementation
     /// <https://github.com/matrix-org/sliding-sync/blob/main/sync3/extensions/account_data.go>
@@ -445,6 +510,46 @@ pub mod request {
             self.enabled.is_none() && self.limit.is_none()
         }
     }
+
+    /// User profiles extension.
+    ///
+    /// Specified as part of [MSC4262](https://github.com/matrix-org/matrix-spec-proposals/pull/4262).
+    #[cfg(feature = "unstable-msc4262")]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+    pub struct Profiles {
+        /// Activate or deactivate this extension.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub enabled: Option<bool>,
+
+        /// List of list names for which user profiles should be enabled.
+        ///
+        /// If not defined, will be enabled for *all* the lists appearing in the
+        /// request. If defined and empty, will be disabled for all the lists.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub lists: Option<Vec<String>>,
+
+        /// List of room names for which user profiles should be enabled.
+        ///
+        /// If not defined, will be enabled for *all* the rooms appearing in the
+        /// room subscriptions. If defined and empty, will be disabled for all
+        /// the rooms.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub rooms: Option<Vec<ExtensionRoomConfig>>,
+
+        /// Optional filter to control which profile fields to receive updates for. If omitted, all
+        /// profile field updates are included.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub fields: Option<Vec<ruma_common::profile::ProfileFieldName>>,
+    }
+
+    #[cfg(feature = "unstable-msc4262")]
+    impl Profiles {
+        /// Whether all fields are empty or `None`.
+        pub fn is_empty(&self) -> bool {
+            self.enabled.is_none()
+        }
+    }
 }
 
 /// Response type for the `/sync` endpoint.
@@ -489,6 +594,8 @@ pub mod response {
     use ruma_common::OneTimeKeyAlgorithm;
     #[cfg(feature = "unstable-msc4308")]
     use ruma_common::OwnedEventId;
+    #[cfg(feature = "unstable-msc4262")]
+    use ruma_common::profile::UserProfileUpdate;
     use ruma_events::{
         AnyGlobalAccountDataEvent, AnyRoomAccountDataEvent, AnyStrippedStateEvent,
         AnyToDeviceEvent, receipt::SyncReceiptEvent, typing::SyncTypingEvent,
@@ -518,11 +625,25 @@ pub mod response {
     #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct Room {
         /// The name as calculated by the server.
+        ///
+        /// If the `unstable-compat-lax-syncv5-deser` feature is enabled,
+        /// this field is ignored if its deserialization fails.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "unstable-compat-lax-syncv5-deser",
+            serde(default, deserialize_with = "ruma_common::serde::default_on_error")
+        )]
         pub name: Option<String>,
 
         /// The avatar.
+        ///
+        /// If the `unstable-compat-lax-syncv5-deser` feature is enabled,
+        /// this field is ignored if its deserialization fails.
         #[serde(default, skip_serializing_if = "JsOption::is_undefined")]
+        #[cfg_attr(
+            feature = "unstable-compat-lax-syncv5-deser",
+            serde(deserialize_with = "ruma_common::serde::default_on_error")
+        )]
         pub avatar: JsOption<OwnedMxcUri>,
 
         /// Whether it is an initial response.
@@ -603,11 +724,25 @@ pub mod response {
         pub user_id: OwnedUserId,
 
         /// The name.
+        ///
+        /// If the `unstable-compat-lax-syncv5-deser` feature is enabled,
+        /// this field is ignored if its deserialization fails.
         #[serde(rename = "displayname", skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "unstable-compat-lax-syncv5-deser",
+            serde(default, deserialize_with = "ruma_common::serde::default_on_error")
+        )]
         pub name: Option<String>,
 
         /// The avatar.
+        ///
+        /// If the `unstable-compat-lax-syncv5-deser` feature is enabled,
+        /// this field is ignored if its deserialization fails.
         #[serde(rename = "avatar_url", skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "unstable-compat-lax-syncv5-deser",
+            serde(default, deserialize_with = "ruma_common::serde::default_on_error")
+        )]
         pub avatar: Option<OwnedMxcUri>,
     }
 
@@ -650,6 +785,24 @@ pub mod response {
             rename = "io.element.msc4308.thread_subscriptions"
         )]
         pub thread_subscriptions: ThreadSubscriptions,
+
+        /// Profiles extension response.
+        #[cfg(feature = "unstable-msc4262")]
+        #[serde(
+            default,
+            skip_serializing_if = "Profiles::is_empty",
+            rename = "org.matrix.msc4262.profiles"
+        )]
+        pub profiles: Profiles,
+
+        /// Sticky events extension response.
+        #[cfg(feature = "unstable-msc4480")]
+        #[serde(
+            default,
+            skip_serializing_if = "StickyEvents::is_empty",
+            rename = "org.matrix.msc4354.sticky_events"
+        )]
+        pub sticky_events: StickyEvents,
     }
 
     impl Extensions {
@@ -657,11 +810,28 @@ pub mod response {
         ///
         /// True if neither to-device, e2ee nor account data are to be found.
         pub fn is_empty(&self) -> bool {
-            self.to_device.is_none()
+            let mut empty = self.to_device.is_none()
                 && self.e2ee.is_empty()
                 && self.account_data.is_empty()
                 && self.receipts.is_empty()
-                && self.typing.is_empty()
+                && self.typing.is_empty();
+
+            #[cfg(feature = "unstable-msc4308")]
+            {
+                empty = empty && self.thread_subscriptions.is_empty();
+            }
+
+            #[cfg(feature = "unstable-msc4262")]
+            {
+                empty = empty && self.profiles.is_empty();
+            }
+
+            #[cfg(feature = "unstable-msc4480")]
+            {
+                empty = empty && self.sticky_events.is_empty();
+            }
+
+            empty
         }
     }
 
@@ -677,6 +847,42 @@ pub mod response {
         /// The to-device events.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub events: Vec<Raw<AnyToDeviceEvent>>,
+    }
+
+    /// Sticky events extension response.
+    ///
+    /// According to [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480).
+    #[cfg(feature = "unstable-msc4480")]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+    pub struct StickyEvents {
+        /// The token to supply in the `since` param of the next request.
+        ///
+        /// Set when there are changes.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub next_batch: Option<String>,
+
+        /// The sticky events, grouped by room.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        pub rooms: BTreeMap<OwnedRoomId, StickyEventsRoom>,
+    }
+
+    #[cfg(feature = "unstable-msc4480")]
+    impl StickyEvents {
+        /// Whether the extension data is empty.
+        pub fn is_empty(&self) -> bool {
+            self.next_batch.is_none() && self.rooms.is_empty()
+        }
+    }
+
+    /// Sticky events for a single room in the sticky events extension response.
+    #[cfg(feature = "unstable-msc4480")]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+    pub struct StickyEventsRoom {
+        /// The sticky events for this room.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub events: Vec<Raw<AnySyncTimelineEvent>>,
     }
 
     /// E2EE extension response.
@@ -802,6 +1008,26 @@ pub mod response {
             self.subscribed.is_empty() && self.unsubscribed.is_empty() && self.prev_batch.is_none()
         }
     }
+
+    /// Profiles extension response.
+    ///
+    /// Specified as part of [MSC4262](https://github.com/matrix-org/matrix-spec-proposals/pull/4262).
+    #[cfg(feature = "unstable-msc4262")]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+    pub struct Profiles {
+        /// Profile updates keyed by user ID.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        pub users: BTreeMap<OwnedUserId, UserProfileUpdate>,
+    }
+
+    #[cfg(feature = "unstable-msc4262")]
+    impl Profiles {
+        /// Whether all fields are empty or `None`.
+        pub fn is_empty(&self) -> bool {
+            self.users.is_empty()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -830,5 +1056,82 @@ mod tests {
             serde_json::from_str::<ExtensionRoomConfig>(r#""!foo:bar.baz""#).unwrap(),
             ExtensionRoomConfig::Room(owned_room_id!("!foo:bar.baz"))
         );
+    }
+
+    #[cfg(feature = "unstable-msc4480")]
+    #[test]
+    fn sticky_events_extension_serde() {
+        use ruma_common::assert_to_canonical_json_eq;
+
+        use super::{request, response};
+
+        // The request extension serializes under the unstable extension key.
+        let mut extensions = request::Extensions::default();
+        extensions.sticky_events =
+            request::StickyEvents { enabled: Some(true), ..Default::default() };
+        assert_to_canonical_json_eq!(
+            extensions,
+            serde_json::json!({ "org.matrix.msc4354.sticky_events": { "enabled": true } })
+        );
+
+        // The response extension and its per-room sticky events deserialize.
+        let response: response::Extensions = serde_json::from_value(serde_json::json!({
+            "org.matrix.msc4354.sticky_events": {
+                "next_batch": "s123",
+                "rooms": {
+                    "!room:example.com": {
+                        "events": [{
+                            "content": { "body": "sticky", "msgtype": "m.text" },
+                            "event_id": "$1:example.com",
+                            "origin_server_ts": 1,
+                            "sender": "@alice:example.com",
+                            "type": "m.room.message",
+                            "msc4354_sticky": {
+                                "duration_ms": 300_000
+                            },
+                        }]
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(response.sticky_events.next_batch.as_deref(), Some("s123"));
+        assert_eq!(response.sticky_events.rooms.len(), 1);
+        let room = response.sticky_events.rooms.values().next().unwrap();
+        assert_eq!(room.events.len(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "unstable-compat-lax-syncv5-deser")]
+    fn deserialize_room_ignores_invalid_string_fields() {
+        use super::response::Room;
+
+        let room: Room = serde_json::from_str(
+            r#"{
+                "name": {},
+                "avatar": {},
+                "heroes": [{ "user_id": "@alice:localhost", "displayname": {}, "avatar_url": {} }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(room.name, None);
+        assert!(room.avatar.is_undefined());
+        let hero = &room.heroes.unwrap()[0];
+        assert_eq!(hero.name, None);
+        assert_eq!(hero.avatar, None);
+
+        // Valid values are still kept.
+        let room: Room = serde_json::from_str(
+            r#"{ "name": "Room", "avatar": "mxc://localhost/a", "heroes": [{ "user_id": "@alice:localhost", "displayname": "Alice", "avatar_url": "mxc://localhost/b" }] }"#,
+        )
+        .unwrap();
+
+        assert_eq!(room.name.as_deref(), Some("Room"));
+        assert_eq!(room.avatar.into_option().unwrap().as_str(), "mxc://localhost/a");
+        let hero = &room.heroes.unwrap()[0];
+        assert_eq!(hero.name.as_deref(), Some("Alice"));
+        assert_eq!(hero.avatar.as_ref().unwrap().as_str(), "mxc://localhost/b");
     }
 }

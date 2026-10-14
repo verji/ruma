@@ -5,21 +5,23 @@
 pub mod v1 {
     //! `/v1/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/application-service-api/#get_matrixappv1thirdpartyprotocolprotocol
+    //! [spec]: https://spec.matrix.org/v1.19/application-service-api/#get_matrixappv1thirdpartyprotocolprotocol
 
     use std::collections::BTreeMap;
 
     use ruma_common::{
-        api::{auth_scheme::AccessToken, request, response},
+        api::{request, response},
         metadata,
         thirdparty::{Protocol, ProtocolInstance, ProtocolInstanceInit},
     };
     use serde::{Deserialize, Serialize};
 
+    use crate::HomeserverToken;
+
     metadata! {
         method: GET,
         rate_limited: false,
-        authentication: AccessToken,
+        authentication: HomeserverToken,
         path: "/_matrix/app/v1/thirdparty/protocol/{protocol}",
     }
 

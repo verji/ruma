@@ -202,6 +202,8 @@ impl<'de> Visitor<'de> for ErrorKindVisitor {
             ErrorCode::CannotOverwriteMedia => ErrorKind::CannotOverwriteMedia,
             ErrorCode::CaptchaInvalid => ErrorKind::CaptchaInvalid,
             ErrorCode::CaptchaNeeded => ErrorKind::CaptchaNeeded,
+            #[cfg(feature = "unstable-msc4388")]
+            ErrorCode::ConcurrentWrite => ErrorKind::ConcurrentWrite,
             #[cfg(feature = "unstable-msc4306")]
             ErrorCode::ConflictingUnsubscription => ErrorKind::ConflictingUnsubscription,
             ErrorCode::ConnectionFailed => ErrorKind::ConnectionFailed,
@@ -309,7 +311,7 @@ impl<'de> Visitor<'de> for ErrorKindVisitor {
                 })
             }
             ErrorCode::_Custom(errcode) => {
-                ErrorKind::_Custom(CustomErrorKind { errcode: errcode.0.into(), data })
+                ErrorKind::_Custom(Box::new(CustomErrorKind { errcode: errcode.0.into(), data }))
             }
         })
     }
@@ -373,8 +375,8 @@ impl Serialize for ErrorKind {
                     st.serialize_entry("sender", sender)?;
                 }
             }
-            Self::_Custom(CustomErrorKind { data, .. }) => {
-                for (k, v) in data {
+            Self::_Custom(kind) => {
+                for (k, v) in &kind.data {
                     st.serialize_entry(k, v)?;
                 }
             }
@@ -433,6 +435,8 @@ impl Serialize for ErrorKind {
             Self::Unactionable => {}
             #[cfg(feature = "unstable-msc4186")]
             Self::UnknownPos => {}
+            #[cfg(feature = "unstable-msc4388")]
+            Self::ConcurrentWrite => {}
         }
         st.end()
     }

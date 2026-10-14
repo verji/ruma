@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+## 0.35.0
+
+Bug fixes:
+
+- Avoid creating empty formatted body fields when editing plain text message events.
+
+Improvements:
+
+- The `unstable-msc4268` and `unstable-msc3061` features were removed and
+  MSC4268 features are included unconditionally, since the MSC was merged into
+  the spec:
+  - We now use the stable identifiers for the `m.shared_history` property in
+    `ToDeviceRoomKeyEventContent` and `ToDeviceForwardedRoomKeyEventContent`.
+  - We now use the stable identifier for `m.room_key_bundle` to-device events.
+  - `RoomKeyWithheldCode` and `RoomKeyWithheldCodeInfo` both gained new variants
+    called `HistoryNotShared`.
+- Add `replaces_state` field to `StateUnsigned`, due to a clarification in the Matrix spec.
+- Stabilize image packs:
+  - `RoomImagePackEventContent` uses its stable `m.room.image_pack` type and was moved under
+    `ruma_events::room::image_pack` to match the namespacing of the type. `PackImage` was renamed to
+    `ImagePackImage` and `PackInfo` was renamed to `ImagePackMeta`, to match the names in the Matrix
+    spec. The `pack` field of `RoomImagePackEventContent` is no longer optional but is not
+    serialized if the `ImagePackMeta` is empty and deserializes to its default value if it is
+    missing.
+  - `ImagePackRoomsEventContent` uses its stable `m.image_pack.rooms` type and was moved under
+    `ruma_events::image_pack::rooms` to match the namespacing of the type. `ImagePackRoomContent`
+    was renamed to `RoomImagePackMeta`.
+  - `ruma_events::image_pack::AccountImagePackEventContent` was removed because it was no longer
+    part of the MSC.
+  - The `unstable-msc2545` cargo feature was removed.
+- Add unstable support for [MSC4354](https://github.com/matrix-org/matrix-spec-proposals/pull/4354) Sticky Events behind the `unstable-msc4354` feature flag.
+- Add the `zeroize(mut self)` method on identifiers, which will call the `zeroize` crate.
+- Add `RoomMessageEventContent::thread` accessor.
+- Add experimental support for [MSC4495] (Selective Presence).
+- Add experimental support for [MSC4494] (Membership-based invite blocking).
+- Add support for [MSC1763] (Configurable per-room message retention periods).
+
+[MSC1763]: https://github.com/matrix-org/matrix-spec-proposals/pull/1763
+[MSC4495]: https://github.com/matrix-org/matrix-spec-proposals/pull/4495
+[MSC4494]: https://github.com/matrix-org/matrix-spec-proposals/pull/4494
+
 ## 0.34.0
 
 Breaking changes:
@@ -12,6 +53,8 @@ Breaking changes:
 Bug fixes:
 
 - Export `AnyRedactionEvent`.
+- Added a `AnyTimelineEventContent` enum which may contain either
+  a `StateEventContent` or a `MessageLIkeEventContent`
 
 Improvements:
 

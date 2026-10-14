@@ -10,11 +10,12 @@
 //! successful response. Such types can then be used by client code to make requests, and by server
 //! code to fulfill those requests.
 //!
-//! [apis]: https://spec.matrix.org/v1.18/#matrix-apis
+//! [apis]: https://spec.matrix.org/v1.19/#matrix-apis
 
 use std::{convert::TryInto as _, error::Error as StdError};
 
 use bytes::BufMut;
+pub use ruma_macros::OutgoingBodyJson;
 /// Generates [`OutgoingRequest`] and [`IncomingRequest`] implementations.
 ///
 /// The `OutgoingRequest` impl is feature-gated behind `cfg(feature = "client")`.
@@ -253,20 +254,53 @@ pub use crate::metadata;
 use crate::{DeviceId, UserId};
 
 pub mod auth_scheme;
+mod body;
 pub mod error;
 mod metadata;
 pub mod path_builder;
 
-pub use self::metadata::{FeatureFlag, MatrixVersion, Metadata, SupportedVersions};
+use self::error::DeserializationError;
+pub use self::{
+    body::{BytesBody, EmptyBody, OutgoingBody},
+    metadata::{FeatureFlag, MatrixVersion, Metadata, OAuthClientScope, SupportedVersions},
+};
 
 /// A request type for a Matrix API endpoint, used for sending requests.
 pub trait OutgoingRequest: Metadata + Clone {
+    /// HTTP body type pre-serialization.
+    type Body: OutgoingBody;
+
     /// A type capturing the expected error conditions the server can return.
     type EndpointError: EndpointError;
 
     /// Response type returned when the request is successful.
     type IncomingResponse: IncomingResponse<EndpointError = Self::EndpointError>;
 
+    /// Tries to convert this request into an `http::Request`.
+    ///
+    /// The endpoints path will be appended to the given `base_url`, for example
+    /// `https://matrix.org`. Since all paths begin with a slash, it is not necessary for the
+    /// `base_url` to have a trailing slash. If it has one however, it will be ignored.
+    ///
+    /// ## Errors
+    ///
+    /// This method can return an error in the following cases:
+    ///
+    /// * On endpoints that have several versions for the path, when there are no supported versions
+    ///   for the endpoint, i.e. when [`PathBuilder::make_endpoint_url()`] returns an error.
+    /// * If the request serialization fails, which should only happen in case of bugs in Ruma.
+    ///
+    /// [`AuthScheme::add_authentication()`]: auth_scheme::AuthScheme::add_authentication
+    /// [`PathBuilder::make_endpoint_url()`]: path_builder::PathBuilder::make_endpoint_url
+    fn try_into_http_request_inner(
+        self,
+        base_url: &str,
+        path_builder_input: <Self::PathBuilder as path_builder::PathBuilder>::Input<'_>,
+    ) -> Result<http::Request<Self::Body>, IntoHttpError>;
+}
+
+/// Convenience functionality on top of [`OutgoingRequest`].
+pub trait OutgoingRequestExt: OutgoingRequest {
     /// Tries to convert this request into an `http::Request`.
     ///
     /// The endpoints path will be appended to the given `base_url`, for example
@@ -290,8 +324,30 @@ pub trait OutgoingRequest: Metadata + Clone {
         base_url: &str,
         authentication_input: <Self::Authentication as auth_scheme::AuthScheme>::Input<'_>,
         path_builder_input: <Self::PathBuilder as path_builder::PathBuilder>::Input<'_>,
-    ) -> Result<http::Request<T>, IntoHttpError>;
+    ) -> Result<http::Request<T>, IntoHttpError> {
+        let (mut parts, body) =
+            self.try_into_http_request_inner(base_url, path_builder_input)?.into_parts();
+
+        if let Some(content_type) = body.content_type()
+            && !parts.headers.contains_key(&http::header::CONTENT_TYPE)
+        {
+            parts.headers.insert(http::header::CONTENT_TYPE, content_type);
+        }
+
+        let mut request =
+            http::Request::from_parts(parts, body.try_into_buf().map_err(Into::into)?);
+
+        <Self::Authentication as auth_scheme::AuthScheme>::add_authentication(
+            &mut request,
+            authentication_input,
+        )
+        .map_err(IntoHttpError::authentication)?;
+
+        Ok(request)
+    }
 }
+
+impl<T: OutgoingRequest> OutgoingRequestExt for T {}
 
 /// A response type for a Matrix API endpoint, used for receiving responses.
 pub trait IncomingResponse: Sized {
@@ -299,10 +355,30 @@ pub trait IncomingResponse: Sized {
     type EndpointError: EndpointError;
 
     /// Tries to convert the given `http::Response` into this response type.
-    fn try_from_http_response<T: AsRef<[u8]>>(
-        response: http::Response<T>,
-    ) -> Result<Self, FromHttpResponseError<Self::EndpointError>>;
+    ///
+    /// Only called for successful responses (HTTP status code < 400).
+    fn try_from_http_response_inner(
+        response: http::Response<&[u8]>,
+    ) -> Result<Self, DeserializationError>;
 }
+
+/// Convenience functionality on top of [`IncomingResponse`].
+pub trait IncomingResponseExt: IncomingResponse {
+    /// Tries to convert the given `http::Response` into this response type.
+    fn try_from_http_response(
+        response: http::Response<&[u8]>,
+    ) -> Result<Self, FromHttpResponseError<Self::EndpointError>> {
+        if response.status().as_u16() >= 400 {
+            return Err(FromHttpResponseError::Server(Self::EndpointError::from_http_response(
+                response,
+            )));
+        }
+
+        Self::try_from_http_response_inner(response).map_err(Into::into)
+    }
+}
+
+impl<T: IncomingResponse> IncomingResponseExt for T {}
 
 /// An extension to [`OutgoingRequest`] which provides Appservice specific methods.
 ///
@@ -346,9 +422,28 @@ pub trait IncomingRequest: Metadata {
     /// Response type to return when the request is successful.
     type OutgoingResponse: OutgoingResponse;
 
-    /// Check whether the given HTTP method from an incoming request is compatible with the expected
-    /// [`METHOD`](Metadata::METHOD) of this endpoint.
-    fn check_request_method(method: &http::Method) -> Result<(), FromHttpRequestError> {
+    /// Tries to turn the given `http::Request` into this request type,
+    /// together with the corresponding path arguments.
+    ///
+    /// Note: The strings in `path_args` need to be percent-decoded.
+    ///
+    /// This function should not check the method of the HTTP request, this check is performed
+    /// in [`IncomingRequestExt::try_from_http_request()`].
+    fn try_from_http_request_inner(
+        request: http::Request<&[u8]>,
+        path_args: &[&str],
+    ) -> Result<Self, DeserializationError>;
+}
+
+/// Convenience functionality on top of [`IncomingRequest`].
+pub trait IncomingRequestExt: IncomingRequest {
+    /// Tries to convert the given `http::Request` into this request type.
+    fn try_from_http_request(
+        request: http::Request<&[u8]>,
+        path_args: &[&str],
+    ) -> Result<Self, FromHttpRequestError> {
+        let method = request.method();
+
         if !(method == Self::METHOD
             || (Self::METHOD == http::Method::GET && method == http::Method::HEAD))
         {
@@ -358,32 +453,46 @@ pub trait IncomingRequest: Metadata {
             });
         }
 
-        Ok(())
+        Ok(Self::try_from_http_request_inner(request, path_args)?)
     }
+}
 
-    /// Tries to turn the given `http::Request` into this request type,
-    /// together with the corresponding path arguments.
+impl<T: IncomingRequest> IncomingRequestExt for T {}
+
+/// A request type for a Matrix API endpoint, used for sending responses.
+pub trait OutgoingResponse: Sized {
+    /// HTTP body type pre-serialization.
+    type Body: OutgoingBody;
+
+    /// Tries to convert this response into an `http::Response`.
     ///
-    /// Note: The strings in path_args need to be percent-decoded.
-    fn try_from_http_request<B, S>(
-        req: http::Request<B>,
-        path_args: &[S],
-    ) -> Result<Self, FromHttpRequestError>
-    where
-        B: AsRef<[u8]>,
-        S: AsRef<str>;
+    /// This method should only fail when invalid header values are specified. It may also fail with
+    /// a serialization error in case of bugs in Ruma though.
+    fn try_into_http_response_inner(self) -> Result<http::Response<Self::Body>, IntoHttpError>;
 }
 
 /// A request type for a Matrix API endpoint, used for sending responses.
-pub trait OutgoingResponse {
+pub trait OutgoingResponseExt: OutgoingResponse {
     /// Tries to convert this response into an `http::Response`.
     ///
-    /// This method should only fail when when invalid header values are specified. It may also
-    /// fail with a serialization error in case of bugs in Ruma though.
-    fn try_into_http_response<T: Default + BufMut>(
+    /// This method should only fail when invalid header values are specified. It may also fail with
+    /// a serialization error in case of bugs in Ruma though.
+    fn try_into_http_response<T: Default + BufMut + AsRef<[u8]>>(
         self,
-    ) -> Result<http::Response<T>, IntoHttpError>;
+    ) -> Result<http::Response<T>, IntoHttpError> {
+        let (mut parts, body) = self.try_into_http_response_inner()?.into_parts();
+
+        if let Some(content_type) = body.content_type()
+            && !parts.headers.contains_key(&http::header::CONTENT_TYPE)
+        {
+            parts.headers.insert(http::header::CONTENT_TYPE, content_type);
+        }
+
+        Ok(http::Response::from_parts(parts, body.try_into_buf().map_err(Into::into)?))
+    }
 }
+
+impl<T: OutgoingResponse> OutgoingResponseExt for T {}
 
 /// Gives users the ability to define their own serializable / deserializable errors.
 pub trait EndpointError: OutgoingResponse + StdError + Sized + Send + 'static {
@@ -391,7 +500,7 @@ pub trait EndpointError: OutgoingResponse + StdError + Sized + Send + 'static {
     ///
     /// This will always return `Err` variant when no `error` field is defined in
     /// the `ruma_api` macro.
-    fn from_http_response<T: AsRef<[u8]>>(response: http::Response<T>) -> Self;
+    fn from_http_response(response: http::Response<&[u8]>) -> Self;
 }
 
 /// The direction to return events from.
@@ -408,9 +517,16 @@ pub enum Direction {
     Forward,
 }
 
+impl Direction {
+    /// method for providing forward as the default direction to serde instead
+    pub fn forward() -> Self {
+        Self::Forward
+    }
+}
+
 /// Data to [assert the identity] of an appservice virtual user.
 ///
-/// [assert the identity]: https://spec.matrix.org/v1.18/application-service-api/#identity-assertion
+/// [assert the identity]: https://spec.matrix.org/v1.19/application-service-api/#identity-assertion
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 #[non_exhaustive]
 pub struct AppserviceUserIdentity<'a> {

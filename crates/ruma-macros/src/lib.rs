@@ -26,6 +26,7 @@ mod util;
 
 use self::{
     api::{
+        body::expand_derive_outgoing_body_json,
         request::{expand_derive_request, expand_request},
         response::{expand_derive_response, expand_response},
     },
@@ -444,11 +445,11 @@ pub fn derive_from_event_to_enum(input: TokenStream) -> TokenStream {
 
 /// Generate methods and trait impl's for DST identifier type.
 ///
-/// This macro generates an `Owned*` wrapper type for the identifier type. This wrapper type is
-/// variable, by default it'll use [`Box`], but it can be changed at compile time
-/// by setting `--cfg=ruma_identifiers_storage=...` using `RUSTFLAGS` or `.cargo/config.toml` (under
-/// `[build]` -> `rustflags = ["..."]`). Currently the only supported value is `Arc`, that uses
-/// [`Arc`](std::sync::Arc) as a wrapper type.
+/// This macro generates an `Owned*` type for the identifier type. The internal representation of
+/// the owned type is variable, by default it'll use a `Box<str>`, but it can be changed at compile
+/// time by setting `--cfg=ruma_identifiers_storage=...` using `RUSTFLAGS` or `.cargo/config.toml`
+/// (under `[build]` -> `rustflags = ["..."]`). The supported values for this setting are listed in
+/// the docs of the owned type.
 ///
 /// This macro implements:
 ///
@@ -462,9 +463,11 @@ pub fn derive_from_event_to_enum(input: TokenStream) -> TokenStream {
 ///
 /// # Attributes
 ///
-/// * `#[ruma_api(validate = PATH)]`: the path to a function to validate the string during parsing
+/// * `#[ruma_id(validate = PATH)]`: the path to a function to validate the string during parsing
 ///   and deserialization. By default, the types implement `From` string types, when this is set
 ///   they implement `TryFrom`.
+/// * `#[ruma_id(smallvec_inline_bytes = USIZE)]`: the size of the inline array for the `SmallVec`
+///   inner representation. If this is not provided the default inline size is `32`.
 ///
 /// # Examples
 ///
@@ -473,7 +476,7 @@ pub fn derive_from_event_to_enum(input: TokenStream) -> TokenStream {
 /// use ruma_macros::IdDst;
 ///
 /// #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, IdDst)]
-/// #[ruma_id(validate = ruma_identifiers_validation::user_id::validate)]
+/// #[ruma_id(validate = ruma_identifiers_validation::user_id::validate, smallvec_inline_bytes = 40)]
 /// pub struct UserId(str);
 /// ```
 #[proc_macro_derive(IdDst, attributes(ruma_id))]
@@ -798,6 +801,13 @@ pub fn derive_request(input: TokenStream) -> TokenStream {
 pub fn derive_response(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input);
     expand_derive_response(input).unwrap_or_else(syn::Error::into_compile_error).into()
+}
+
+/// Implement `OutgoingBody` in terms of `ruma_common::serde::json_to_buf`.
+#[proc_macro_derive(OutgoingBodyJson)]
+pub fn derive_outgoing_body_json(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input);
+    expand_derive_outgoing_body_json(input).into()
 }
 
 /// A derive macro that generates no code, but registers the ruma_api attribute so both

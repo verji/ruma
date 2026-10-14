@@ -5,22 +5,22 @@
 pub mod v2 {
     //! `/v2/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/identity-service-api/#post_matrixidentityv2lookup
+    //! [spec]: https://spec.matrix.org/v1.19/identity-service-api/#post_matrixidentityv2lookup
 
     use std::collections::BTreeMap;
 
     use ruma_common::{
         OwnedUserId,
-        api::{auth_scheme::AccessToken, request, response},
+        api::{request, response},
         metadata,
     };
 
-    use crate::lookup::IdentifierHashingAlgorithm;
+    use crate::{IdentityServiceToken, lookup::IdentifierHashingAlgorithm};
 
     metadata! {
         method: POST,
         rate_limited: false,
-        authentication: AccessToken,
+        authentication: IdentityServiceToken,
         history: {
             1.0 => "/_matrix/identity/v2/lookup",
         }

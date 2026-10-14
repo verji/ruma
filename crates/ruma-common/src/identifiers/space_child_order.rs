@@ -8,10 +8,10 @@ use ruma_macros::IdDst;
 /// within the range `\x20` (space) and `\x7E` (~), inclusive. Their length must must not exceed 50
 /// characters.
 ///
-/// [`m.space.child`]: https://spec.matrix.org/v1.18/client-server-api/#mspacechild
+/// [`m.space.child`]: https://spec.matrix.org/v1.19/client-server-api/#mspacechild
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, IdDst)]
-#[ruma_id(validate = ruma_identifiers_validation::space_child_order::validate)]
+#[ruma_id(validate = ruma_identifiers_validation::space_child_order::validate, smallvec_inline_bytes = 50)]
 pub struct SpaceChildOrder(str);
 
 #[cfg(test)]

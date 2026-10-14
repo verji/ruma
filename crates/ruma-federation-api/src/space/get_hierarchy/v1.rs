@@ -1,6 +1,6 @@
 //! `/v1/` ([spec])
 //!
-//! [spec]: https://spec.matrix.org/v1.18/server-server-api/#get_matrixfederationv1hierarchyroomid
+//! [spec]: https://spec.matrix.org/v1.19/server-server-api/#get_matrixfederationv1hierarchyroomid
 
 use ruma_common::{
     OwnedRoomId,
@@ -67,8 +67,8 @@ impl Response {
 
 #[cfg(all(test, feature = "client"))]
 mod tests {
-    use ruma_common::{OwnedRoomId, api::IncomingResponse};
-    use serde_json::{json, to_vec as to_json_vec};
+    use ruma_common::{OwnedRoomId, api::IncomingResponseExt as _};
+    use serde_json::json;
 
     use super::Response;
 
@@ -107,9 +107,10 @@ mod tests {
                     }
                 ],
             },
-        });
-        let response = http::Response::new(to_json_vec(&body).unwrap());
+        })
+        .to_string();
 
+        let response = http::Response::new(body.as_bytes());
         let response = Response::try_from_http_response(response).unwrap();
 
         assert_eq!(response.room.summary.room_id, "!room:localhost");

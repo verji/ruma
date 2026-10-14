@@ -1,6 +1,12 @@
 //! `PUT /_matrix/client/*/rooms/{roomId}/send/{eventType}/{txnId}`
 //!
-//! Send a delayed event (a scheduled message) to a room. [MSC4140](https://github.com/matrix-org/matrix-spec-proposals/pull/4140)
+//! Send a delayed event (a scheduled message) to a room.
+//!
+//! This endpoint implements a previous iteration of MSC4140 at commit [`3ee73ab`].
+//! At the time of writing, this matches the current implementation of Synapse but the latest
+//! iteration of the MSC uses the `send_delayed_event` endpoint instead.
+//!
+//! [`3ee73ab`]: https://github.com/matrix-org/matrix-spec-proposals/blob/3ee73abe5f81252b00877cfb5db941ee9aa6c18d/proposals/4140-delayed-events-futures.md
 
 pub mod unstable {
     //! `msc4140` ([MSC])
@@ -47,7 +53,7 @@ pub mod unstable {
         ///
         /// It will be used by the server to ensure idempotency of requests.
         ///
-        /// [access token is refreshed]: https://spec.matrix.org/v1.18/client-server-api/#refreshing-access-tokens
+        /// [access token is refreshed]: https://spec.matrix.org/v1.19/client-server-api/#refreshing-access-tokens
         #[ruma_api(path)]
         pub txn_id: OwnedTransactionId,
 
@@ -109,7 +115,7 @@ pub mod unstable {
 
     impl Response {
         /// Creates a new `Response` with the tokens required to control the delayed event using the
-        /// [`crate::delayed_events::update_delayed_event::unstable::Request`] request.
+        /// [`crate::delayed_events::update_delayed_event::unstable_v1::Request`] request.
         pub fn new(delay_id: String) -> Self {
             Self { delay_id }
         }
@@ -121,7 +127,8 @@ pub mod unstable {
 
         use ruma_common::{
             api::{
-                MatrixVersion, OutgoingRequest, SupportedVersions, auth_scheme::SendAccessToken,
+                MatrixVersion, OutgoingRequestExt as _, SupportedVersions,
+                auth_scheme::SendAccessToken,
             },
             owned_room_id,
         };

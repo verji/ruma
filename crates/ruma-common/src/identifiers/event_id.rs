@@ -51,11 +51,11 @@ use super::{IdParseError, ServerName};
 /// );
 /// ```
 ///
-/// [event ID]: https://spec.matrix.org/v1.18/appendices/#event-ids
-/// [room versions]: https://spec.matrix.org/v1.18/rooms/
+/// [event ID]: https://spec.matrix.org/v1.19/appendices/#event-ids
+/// [room versions]: https://spec.matrix.org/v1.19/rooms/
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, IdDst)]
-#[ruma_id(validate = ruma_identifiers_validation::event_id::validate)]
+#[ruma_id(validate = ruma_identifiers_validation::event_id::validate, smallvec_inline_bytes = 48)]
 pub struct EventId(str);
 
 impl EventId {

@@ -3,10 +3,13 @@
 //! (De)serializable types for the [Matrix Server-Server API][federation-api].
 //! These types are used by server code.
 //!
-//! [federation-api]: https://spec.matrix.org/v1.18/server-server-api/
+//! [federation-api]: https://spec.matrix.org/v1.19/server-server-api/
 
-#![warn(missing_docs)]
+// This crate is not useful without either of those features, so export nothing if they are not
+// enabled to avoid errors when running checks wrongly without enabling any of them.
+#![cfg(any(feature = "client", feature = "server"))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![warn(missing_docs)]
 
 mod serde;
 

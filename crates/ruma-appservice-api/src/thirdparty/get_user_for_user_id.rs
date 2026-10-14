@@ -5,19 +5,21 @@
 pub mod v1 {
     //! `/v1/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/application-service-api/#get_matrixappv1thirdpartyuser
+    //! [spec]: https://spec.matrix.org/v1.19/application-service-api/#get_matrixappv1thirdpartyuser
 
     use ruma_common::{
         OwnedUserId,
-        api::{auth_scheme::AccessToken, request, response},
+        api::{request, response},
         metadata,
         thirdparty::User,
     };
 
+    use crate::HomeserverToken;
+
     metadata! {
         method: GET,
         rate_limited: false,
-        authentication: AccessToken,
+        authentication: HomeserverToken,
         path: "/_matrix/app/v1/thirdparty/user",
     }
 

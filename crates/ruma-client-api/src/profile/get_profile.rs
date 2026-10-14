@@ -5,19 +5,17 @@
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv3profileuserid
+    //! [spec]: https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv3profileuserid
 
-    use std::collections::{BTreeMap, btree_map};
+    use std::collections::btree_map;
 
     use ruma_common::{
         OwnedUserId,
         api::{auth_scheme::NoAccessToken, request, response},
         metadata,
-        profile::{ProfileFieldName, ProfileFieldValue},
+        profile::{ProfileFieldName, ProfileFieldValue, StaticProfileField, UserProfile},
     };
     use serde_json::Value as JsonValue;
-
-    use crate::profile::StaticProfileField;
 
     metadata! {
         method: GET,
@@ -43,7 +41,7 @@ pub mod v3 {
     pub struct Response {
         /// The profile data.
         #[ruma_api(body)]
-        data: BTreeMap<String, JsonValue>,
+        pub data: UserProfile,
     }
 
     impl Request {
@@ -72,7 +70,7 @@ pub mod v3 {
         pub fn get_static<F: StaticProfileField>(
             &self,
         ) -> Result<Option<F::Value>, serde_json::Error> {
-            self.data.get(F::NAME).map(|value| serde_json::from_value(value.clone())).transpose()
+            self.data.get_static::<F>()
         }
 
         /// Gets an iterator over the fields of the profile.
@@ -82,25 +80,31 @@ pub mod v3 {
 
         /// Sets a field to the given value.
         pub fn set(&mut self, field: String, value: JsonValue) {
-            self.data.insert(field, value);
+            self.data.set(field, value);
+        }
+    }
+
+    impl From<UserProfile> for Response {
+        fn from(value: UserProfile) -> Self {
+            Self { data: value }
         }
     }
 
     impl FromIterator<(String, JsonValue)> for Response {
         fn from_iter<T: IntoIterator<Item = (String, JsonValue)>>(iter: T) -> Self {
-            Self { data: iter.into_iter().collect() }
+            Self { data: UserProfile::from_iter(iter) }
         }
     }
 
     impl FromIterator<(ProfileFieldName, JsonValue)> for Response {
         fn from_iter<T: IntoIterator<Item = (ProfileFieldName, JsonValue)>>(iter: T) -> Self {
-            iter.into_iter().map(|(field, value)| (field.as_str().to_owned(), value)).collect()
+            Self { data: UserProfile::from_iter(iter) }
         }
     }
 
     impl FromIterator<ProfileFieldValue> for Response {
         fn from_iter<T: IntoIterator<Item = ProfileFieldValue>>(iter: T) -> Self {
-            iter.into_iter().map(|value| (value.field_name(), value.value().into_owned())).collect()
+            Self { data: UserProfile::from_iter(iter) }
         }
     }
 
@@ -112,15 +116,13 @@ pub mod v3 {
 
     impl Extend<(ProfileFieldName, JsonValue)> for Response {
         fn extend<T: IntoIterator<Item = (ProfileFieldName, JsonValue)>>(&mut self, iter: T) {
-            self.extend(iter.into_iter().map(|(field, value)| (field.as_str().to_owned(), value)));
+            self.data.extend(iter);
         }
     }
 
     impl Extend<ProfileFieldValue> for Response {
         fn extend<T: IntoIterator<Item = ProfileFieldValue>>(&mut self, iter: T) {
-            self.extend(
-                iter.into_iter().map(|value| (value.field_name(), value.value().into_owned())),
-            );
+            self.data.extend(iter);
         }
     }
 
@@ -143,7 +145,9 @@ mod tests {
     #[test]
     #[cfg(feature = "server")]
     fn serialize_response() {
-        use ruma_common::{api::OutgoingResponse, owned_mxc_uri, profile::ProfileFieldValue};
+        use ruma_common::{
+            api::OutgoingResponseExt as _, owned_mxc_uri, profile::ProfileFieldValue,
+        };
         use serde_json::{Value as JsonValue, from_slice as from_json_slice};
 
         let response = [
@@ -169,31 +173,32 @@ mod tests {
     #[test]
     #[cfg(feature = "client")]
     fn deserialize_response() {
-        use ruma_common::api::IncomingResponse;
-        use serde_json::to_vec as to_json_vec;
+        use ruma_common::api::IncomingResponseExt as _;
 
         use crate::profile::{AvatarUrl, DisplayName};
 
         // Values are set.
-        let body = to_json_vec(&json!({
+        let body = json!({
             "avatar_url": "mxc://localhost/abcdef",
             "displayname": "Alice",
             "custom_field": "value",
-        }))
-        .unwrap();
+        })
+        .to_string();
 
-        let response = Response::try_from_http_response(http::Response::new(body)).unwrap();
+        let response =
+            Response::try_from_http_response(http::Response::new(body.as_bytes())).unwrap();
         assert_eq!(response.get_static::<AvatarUrl>().unwrap().unwrap(), "mxc://localhost/abcdef");
         assert_eq!(response.get_static::<DisplayName>().unwrap().unwrap(), "Alice");
         assert_eq!(response.get("custom_field").unwrap().as_str().unwrap(), "value");
 
         // Values are missing or null.
-        let body = to_json_vec(&json!({
+        let body = json!({
             "custom_field": null,
-        }))
-        .unwrap();
+        })
+        .to_string();
 
-        let response = Response::try_from_http_response(http::Response::new(body)).unwrap();
+        let response =
+            Response::try_from_http_response(http::Response::new(body.as_bytes())).unwrap();
         assert_eq!(response.get_static::<AvatarUrl>().unwrap(), None);
         assert_eq!(response.get_static::<DisplayName>().unwrap(), None);
         assert!(response.get("custom_field").unwrap().is_null());

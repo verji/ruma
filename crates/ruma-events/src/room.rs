@@ -32,6 +32,7 @@ mod encrypted_file_serde;
 pub mod encryption;
 pub mod guest_access;
 pub mod history_visibility;
+pub mod image_pack;
 pub mod join_rules;
 #[cfg(feature = "unstable-msc4334")]
 pub mod language;
@@ -41,7 +42,11 @@ pub mod name;
 pub mod pinned_events;
 pub mod policy;
 pub mod power_levels;
+#[cfg(feature = "unstable-msc4495")]
+pub mod presence_sharing;
 pub mod redaction;
+#[cfg(feature = "unstable-msc1763")]
+pub mod retention;
 pub mod server_acl;
 pub mod third_party_invite;
 mod thumbnail_source_serde;

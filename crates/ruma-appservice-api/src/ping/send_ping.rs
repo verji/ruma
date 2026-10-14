@@ -9,14 +9,16 @@ pub mod unstable {
 
     use ruma_common::{
         OwnedTransactionId,
-        api::{auth_scheme::AccessToken, request, response},
+        api::{request, response},
         metadata,
     };
+
+    use crate::HomeserverToken;
 
     metadata! {
         method: POST,
         rate_limited: false,
-        authentication: AccessToken,
+        authentication: HomeserverToken,
         path: "/_matrix/app/unstable/fi.mau.msc2659/ping",
     }
 
@@ -53,18 +55,20 @@ pub mod unstable {
 pub mod v1 {
     //! `/v1/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/v1.18/application-service-api/#post_matrixappv1ping
+    //! [spec]: https://spec.matrix.org/v1.19/application-service-api/#post_matrixappv1ping
 
     use ruma_common::{
         OwnedTransactionId,
-        api::{auth_scheme::AccessToken, request, response},
+        api::{request, response},
         metadata,
     };
+
+    use crate::HomeserverToken;
 
     metadata! {
         method: POST,
         rate_limited: false,
-        authentication: AccessToken,
+        authentication: HomeserverToken,
         path: "/_matrix/app/v1/ping",
     }
 
